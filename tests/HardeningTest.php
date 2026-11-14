@@ -126,7 +126,7 @@ final class HardeningTest extends TestCase
             (new IndexSpec('i', 'openai', 'x', 8, "4\x1fraw@1"))->fingerprint(),
         );
         $this->assertNotSame(Chunk::idFor("r\x1fs", 't', 0, 1, 'a'), Chunk::idFor('r', "s\x1ft", 0, 1, 'a'));
-        $this->assertNotSame(new Scope('a', 'b/c')->qualify('source', 'd'), new Scope('a', 'b')->qualify('source', 'c/d'));
+        $this->assertNotSame((new Scope('a', 'b/c'))->qualify('source', 'd'), (new Scope('a', 'b'))->qualify('source', 'c/d'));
     }
 
     public function test_a_chunk_whose_text_is_not_its_span_is_refused(): void
