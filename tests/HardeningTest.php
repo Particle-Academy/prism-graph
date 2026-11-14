@@ -114,6 +114,9 @@ final class HardeningTest extends TestCase
         $previous = setlocale(LC_NUMERIC, '0');
         $german = setlocale(LC_NUMERIC, 'de_DE.UTF-8', 'de_DE.utf8', 'de_DE', 'German_Germany.1252', 'German');
         if ($german === false) {
+            if (getenv('PRISM_GRAPH_REQUIRE_LOCALE') === '1') {
+                $this->fail('PRISM_GRAPH_REQUIRE_LOCALE=1 but no German locale is installed.');
+            }
             $this->markTestSkipped('No German locale installed to prove this with.');
         }
         try {

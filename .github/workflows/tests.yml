@@ -39,6 +39,10 @@ jobs:
           coverage: none
       - run: composer install --no-interaction --no-progress --prefer-dist
       - run: composer audit
+      - name: German locale (proves pgvector literals ignore LC_NUMERIC)
+        run: |
+          sudo locale-gen de_DE.UTF-8
+          echo "PRISM_GRAPH_REQUIRE_LOCALE=1" >> "$GITHUB_ENV"
       - name: sqlite-vec (PHP 8.4+, pinned by checksum)
         if: matrix.php == '8.4'
         env:
