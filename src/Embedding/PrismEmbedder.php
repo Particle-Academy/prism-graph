@@ -37,10 +37,18 @@ final readonly class PrismEmbedder implements Embedder
     {
         $vectors = [];
         foreach (array_chunk(array_values($texts), $this->batchSize) as $batch) {
-            $response = Prism::embeddings()
-                ->using($this->spec->provider, $this->spec->model)
-                ->fromArray($batch)
-                ->asEmbeddings();
+            try {
+                $response = Prism::embeddings()
+                    ->using($this->spec->provider, $this->spec->model)
+                    ->fromArray($batch)
+                    ->asEmbeddings();
+            } catch (\Throwable $failure) {
+                // Provider and transport failures (PrismException, HTTP
+                // connection errors) become one GraphException, so callers can
+                // treat "the embedding provider failed" as the storage-side
+                // failure it is, distinct from a bug in our own code.
+                throw new GraphException("Embedding with {$this->spec->provider}:{$this->spec->model} failed: ".$failure->getMessage(), 0, $failure);
+            }
             if (count($response->embeddings) !== count($batch)) {
                 throw new GraphException('The provider returned a different number of embeddings than inputs.');
             }

@@ -128,9 +128,13 @@ final class ScopedGraph
      * and, when configured, vectors, fused by reciprocal rank. A chunk with no
      * vector yet still ranks through text: derived indexes rank, never hide.
      *
+     * Pass $vectors = false for a text-only search with no call to the
+     * embedding provider: bounded by the database alone, which is what a
+     * caller on a latency budget (wake-up before every model call) wants.
+     *
      * @return list<Hit>
      */
-    public function search(string $query, int $limit = 10): array
+    public function search(string $query, int $limit = 10, bool $vectors = true): array
     {
         if ($limit < 1 || $limit > self::MAX_LIMIT) {
             throw new InvalidArgumentException('limit must be between 1 and '.self::MAX_LIMIT.'.');
@@ -143,7 +147,7 @@ final class ScopedGraph
         }
 
         $lists = ['text' => array_column($this->store->textSearch($this->scope, $query, $limit * 3), 'chunk_id')];
-        if ($this->vectors !== null && trim($query) !== '') {
+        if ($vectors && $this->vectors !== null && trim($query) !== '') {
             // The index is partitioned by tenant (see spec()), and over-fetched
             // because rows of other owners in the same tenant are filtered next.
             $nearest = $this->vectors->nearest($this->spec(), $this->embedder->embed([$query])[0], min(1000, $limit * 10));

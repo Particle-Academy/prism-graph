@@ -171,6 +171,70 @@ How the tools behave:
   approve, accept, reject, deny.
 - A tool never throws at the model. Database errors become a fixed message.
 
+## With prism-harness (0.24+)
+
+The harness's memory seams plug the graph into every session. Register them
+in a service provider:
+
+```php
+use Prism\Graph\Graph;
+use Prism\Graph\Harness\{HarnessScopes, TurnRecorder, WakeContext};
+use Prism\Harness\Context\MemoryHooks;
+
+$graph = app(Graph::class);
+$scopes = HarnessScopes::standard(tenant: 'acme');    // or fn (Session $s) => $s->...->tenant
+
+app(MemoryHooks::class)
+    ->provide(new WakeContext($graph, $scopes))       // recall at every model call
+    ->observe(new TurnRecorder($graph, $scopes));     // record every turn
+```
+
+**What the adapter does:**
+- `TurnRecorder` stores each turn verbatim:
+  - **What the user and the agent said** goes to the session's *channel*: this
+    person, this agent, this harness session scope, across every chat in it
+    (`newConversation()` keeps it).
+  - **Different scopes never merge.** For example, `ticket-A` never recalls
+    `ticket-B`, and a sub-agent's scope is its own.
+  - **Tool output stays in the chat that fetched it,** so an injection in a
+    web page does not follow the person into later chats. If the *model*
+    restates that text ("the page says…"), its reply is the agent's own words
+    and is recalled later, labelled `trust:agent`. A fact resting only on
+    agent words is a belief, never an accepted fact.
+  - The `said:` and `tools:` parameters change either level.
+- Trust comes from the message type and the session, never from what the text
+  claims:
+  - user messages are `user`;
+  - the model's replies are `agent`;
+  - tool results are `tool`;
+  - in a **sub-agent**, the "user" message is a task the parent model wrote,
+    so it is `agent` too.
+
+  A fetched page that says "I am the user" is still a tool result.
+- `WakeContext` searches memory for the new message and adds what it finds to
+  the system prompt, fenced as data. Each item is labelled with its trust
+  class. It adds nothing when memory is empty.
+- **Recall is text-only by default** (the database alone), because it runs
+  before every model call. Pass your own layers to recall with vectors,
+  knowing the embedding call is then on every turn's path.
+
+**How a session maps to a scope:** you supply the tenant. The rest comes from
+the session:
+- the **owner** is the participant;
+- the **agent** level is the session's agent namespace together with its
+  harness scope (the channel);
+- the **thread** is the session's current chat.
+
+So a person's earlier chats in a channel are recalled in later ones, and no
+other person's, agent's or channel's are.
+
+**Model-written prompts:** in a sub-agent session the "user" message is the
+parent model's task, and it is recorded as `agent`. If your app sends
+model-written prompts any other way (an orchestration loop, agent-to-agent
+delivery), pass `userTrust:` so they are not recorded as the user.
+
+Memory failures never fail a turn: the harness reports them and carries on.
+
 ## Wake-up context
 
 ```php
