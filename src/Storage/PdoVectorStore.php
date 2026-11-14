@@ -15,14 +15,14 @@ use Prism\Graph\IndexSpec;
  * SQLite or PostgreSQL. No extension needed; correct at small-to-medium scale.
  * Use the sqlite-vec or pgvector stores for larger indexes.
  */
-final class PdoVectorStore implements VectorStore
+class PdoVectorStore implements VectorStore
 {
     public const MAX_K = 1000;
 
     public function __construct(
-        private readonly PDO $pdo,
-        private readonly string $indexes = 'graph_vector_indexes',
-        private readonly string $vectors = 'graph_vectors',
+        protected readonly PDO $pdo,
+        protected readonly string $indexes = 'graph_vector_indexes',
+        protected readonly string $vectors = 'graph_vectors',
     ) {
         foreach ([$indexes, $vectors] as $table) {
             if (preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,62}$/', $table) !== 1) {
@@ -121,7 +121,7 @@ final class PdoVectorStore implements VectorStore
         return $out;
     }
 
-    private function fingerprintOf(string $name): ?string
+    protected function fingerprintOf(string $name): ?string
     {
         $statement = $this->pdo->prepare("SELECT fingerprint FROM {$this->indexes} WHERE name = ?");
         $statement->execute([$name]);
@@ -130,7 +130,7 @@ final class PdoVectorStore implements VectorStore
         return $value === false ? null : (string) $value;
     }
 
-    private function assertPinned(IndexSpec $spec, ?string $stored): void
+    protected function assertPinned(IndexSpec $spec, ?string $stored): void
     {
         if ($stored === null) {
             throw new GraphException("Index [{$spec->name}] does not exist; call ensureIndex() first.");
@@ -141,7 +141,7 @@ final class PdoVectorStore implements VectorStore
     }
 
     /** @param list<float> $vector */
-    private function pack(IndexSpec $spec, array $vector): string
+    protected function pack(IndexSpec $spec, array $vector): string
     {
         if (count($vector) !== $spec->dimensions || ! array_is_list($vector)) {
             throw new GraphException("Expected a list of {$spec->dimensions} floats for index [{$spec->name}].");

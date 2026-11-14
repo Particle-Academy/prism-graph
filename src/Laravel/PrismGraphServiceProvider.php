@@ -15,6 +15,7 @@ use Prism\Graph\IndexSpec;
 use Prism\Graph\Storage\PdoGraphStore;
 use Prism\Graph\Storage\PdoVectorStore;
 use Prism\Graph\Storage\PgVectorStore;
+use Prism\Graph\Storage\SqliteVecStore;
 use Prism\Graph\TableMap;
 
 /**
@@ -63,6 +64,8 @@ final class PrismGraphServiceProvider extends ServiceProvider
             $driver === null || $driver === '' => null,
             $driver === 'pdo' => new PdoVectorStore($this->pdo($app)),
             $driver === 'pgvector' => new PgVectorStore($this->pdo($app)),
+            // The app loads the extension on the connection (Pdo\Sqlite::loadExtension).
+            $driver === 'sqlite-vec' => new SqliteVecStore($this->pdo($app)),
             $app->bound($driver) => $app->make($driver),
             default => throw new InvalidArgumentException("Unknown prism-graph vector driver [{$driver}]."),
         };

@@ -17,6 +17,7 @@ return [
 
     // Vector search is OPTIONAL. null: text search and traversal only.
     // 'pdo': exact search stored in the same database (any SQLite/PostgreSQL).
+    // 'sqlite-vec': SQLite with sqlite-vec loaded on the connection (same tables as 'pdo').
     // 'pgvector': PostgreSQL with the pgvector extension.
     // Any other value: a container binding implementing Prism\Graph\Contracts\VectorStore.
     'vectors' => env('PRISM_GRAPH_VECTORS'),

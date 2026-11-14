@@ -39,7 +39,17 @@ jobs:
           coverage: none
       - run: composer install --no-interaction --no-progress --prefer-dist
       - run: composer audit
-      - name: Tests (SQLite and PostgreSQL with pgvector)
+      - name: sqlite-vec (PHP 8.4+, pinned by checksum)
+        if: matrix.php == '8.4'
+        env:
+          SQLITE_VEC_SHA256: b959baa1d8dc88861b1edb337b8587178cdcb12d60b4998f9d10b6a82052d5d7
+        run: |
+          curl -fsSL -o /tmp/vec.tar.gz https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz
+          echo "${SQLITE_VEC_SHA256}  /tmp/vec.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/vec && tar -xzf /tmp/vec.tar.gz -C /tmp/vec
+          echo "PRISM_GRAPH_SQLITE_VEC=/tmp/vec/vec0.so" >> "$GITHUB_ENV"
+          echo "PRISM_GRAPH_REQUIRE_SQLITE_VEC=1" >> "$GITHUB_ENV"
+      - name: Tests (SQLite, sqlite-vec on 8.4, PostgreSQL with pgvector)
         env:
           PRISM_GRAPH_TEST_PG_DSN: pgsql:host=127.0.0.1;port=5432;dbname=graph_ci
           PRISM_GRAPH_TEST_PG_USER: graph_ci
