@@ -13,7 +13,8 @@ namespace Prism\Graph\Support;
  *
  * Covered: every format character (\p{Cf}: zero-width marks, bidi controls,
  * tag characters, soft hyphen, BOM), variation selectors (FE00-FE0F,
- * E0100-E01EF), the combining grapheme joiner (034F), the Hangul fillers
+ * E0100-E01EF, Mongolian 180B-180F), the combining grapheme joiner (034F),
+ * the braille blank (2800), the Hangul fillers
  * (115F, 1160, 3164, FFA0) and the line and paragraph separators (2028,
  * 2029). The stored text is untouched; ids still address its exact bytes.
  *
@@ -21,7 +22,7 @@ namespace Prism\Graph\Support;
  */
 final class Visible
 {
-    private const HIDDEN = '/[\p{Cf}\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}\x{034F}\x{115F}\x{1160}\x{3164}\x{FFA0}\x{2028}\x{2029}]/u';
+    private const HIDDEN = '/[\p{Cf}\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}\x{034F}\x{180B}-\x{180F}\x{2800}\x{115F}\x{1160}\x{3164}\x{FFA0}\x{2028}\x{2029}]/u';
 
     public static function mark(string $text): string
     {

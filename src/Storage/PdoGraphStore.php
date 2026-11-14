@@ -61,23 +61,27 @@ final class PdoGraphStore implements GraphStore
         // ONE transaction for the source, its chunks and their retirement, so an
         // erase can never land between them and leave orphaned text behind.
         $this->transaction(function () use ($scope, $key, $id, $uri, $sha256, $metadata, $origin, $occurred, $chunks, &$stored, &$retired): void {
-            $existing = $this->select("SELECT trust FROM {$this->tables->sources} WHERE id = ?", [$id]);
-            // TRUST IS IMMUTABLE. A key first written as tool output and later
-            // re-ingested "as a document" would otherwise relabel every chunk it
-            // ever held, and the acceptance policy reads that label. To change
-            // trust, erase the source and ingest it again.
-            if ($existing !== [] && (string) $existing[0]['trust'] !== $origin->trust->value) {
-                throw new GraphException("Source [{$key}] was stored with trust [{$existing[0]['trust']}]; trust cannot change. Erase it and ingest again.");
-            }
-            $this->run(
+            // TRUST IS IMMUTABLE, and enforced by the upsert itself: the update
+            // only applies when the stored trust equals the new one, so there is
+            // no read-then-write window in which two first-time ingests of one
+            // key (one "document", one "tool") can both pass a check. A key first
+            // written as tool output would otherwise be relabelled, and the
+            // acceptance policy reads that label. To change trust, erase the
+            // source and ingest it again.
+            $written = $this->run(
                 "INSERT INTO {$this->tables->sources}
                  (id, source_key, tenant_id, owner_id, agent_id, thread_id, uri, sha256, metadata, trust, writer, occurred_at, recorded_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (id) DO UPDATE SET uri = excluded.uri, sha256 = excluded.sha256, metadata = excluded.metadata,
-                    writer = excluded.writer, occurred_at = excluded.occurred_at",
+                    writer = excluded.writer, occurred_at = excluded.occurred_at
+                 WHERE {$this->tables->sources}.trust = excluded.trust",
                 [$id, $key, ...array_values($scope->toArray()), $uri, $sha256, json_encode($metadata, JSON_THROW_ON_ERROR),
                     $origin->trust->value, $origin->writer, $occurred, $this->now()],
             );
+            if ($written !== 1) {
+                $stored = $this->select("SELECT trust FROM {$this->tables->sources} WHERE id = ?", [$id])[0]['trust'] ?? 'unknown';
+                throw new GraphException("Source [{$key}] was stored with trust [{$stored}]; trust cannot change. Erase it and ingest again.");
+            }
 
             $statement = $this->pdo->prepare(
                 "INSERT INTO {$this->tables->chunks}

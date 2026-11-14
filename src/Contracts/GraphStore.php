@@ -52,7 +52,15 @@ interface GraphStore
     /** The world changed: close $oldKey's valid time and record the replacement, atomically. */
     public function supersede(Scope $scope, string $oldKey, Fact $replacement, AcceptancePolicy $policy): Fact;
 
-    /** We were wrong: end the fact's RECORDED time. It stays answerable by knownAt. */
+    /**
+     * We were wrong: end the fact's RECORDED time. It stays answerable by knownAt.
+     *
+     * An APP decision, never a tool. Unlike supersede() it does NOT check the
+     * acceptance policy: retracting an accepted fact and asserting a new one
+     * bypasses the overwrite guard supersede() enforces, and can replace an
+     * accepted fact with weaker evidence. Do that only as a deliberate app
+     * decision; to record that the world changed, use supersede().
+     */
     public function retract(Scope $scope, string $key): void;
 
     /** An app decision: a proposed fact becomes accepted. */

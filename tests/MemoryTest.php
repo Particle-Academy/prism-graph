@@ -325,6 +325,38 @@ final class MemoryTest extends TestCase
         $this->memory->accept('office');
     }
 
+    public function test_an_erase_during_embedding_does_not_leave_the_vector_behind(): void
+    {
+        // Re-review warning 2: erase ran while the provider was embedding, then
+        // the upsert wrote the erased chunk's vector back.
+        $vectors = new PdoVectorStore($this->pdo);
+        $memory = null;
+        $embedder = new class(function () use (&$memory): void {
+            $memory->erase('k');
+        }) implements \Prism\Graph\Contracts\Embedder
+        {
+            public function __construct(private readonly \Closure $duringEmbed) {}
+
+            public function spec(): \Prism\Graph\IndexSpec
+            {
+                return new \Prism\Graph\IndexSpec('main', 'test', 'm', 2);
+            }
+
+            public function embed(array $texts): array
+            {
+                ($this->duringEmbed)();
+
+                return array_map(static fn () => [1.0, 0.5], $texts);
+            }
+        };
+        $memory = $this->graph($vectors, $embedder)->scope(self::acme()->owner('alice'));
+
+        $memory->ingest('k', 'f://k', "Personal data to be erased.\n", new MarkdownChunker, self::user());
+
+        $this->assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM graph_chunks')->fetchColumn());
+        $this->assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM graph_vectors')->fetchColumn(), 'an embedding of erased text survived');
+    }
+
     public function test_full_text_search_survives_vacuum(): void
     {
         $this->memory->ingest('a', 'f://a', "First kestrel.\n", new MarkdownChunker, self::user());

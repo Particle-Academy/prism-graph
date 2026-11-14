@@ -79,6 +79,15 @@ final class ScopedGraph
                     throw new GraphException('The embedder returned a different number of vectors than chunks.');
                 }
                 $this->vectors->upsert($spec, array_combine($todo, $vectors));
+                // An erase that ran while the provider was embedding has already
+                // removed these chunks and forgotten their vectors, BEFORE this
+                // upsert wrote them back. Erased text must not live on as an
+                // embedding, so drop the vectors of chunks that are gone.
+                $present = array_map(static fn (Chunk $c) => $c->id, $this->store->getChunks($this->scope, $todo));
+                $gone = array_values(array_diff($todo, $present));
+                if ($gone !== []) {
+                    $this->vectors->forget($gone);
+                }
             }
         }
 
