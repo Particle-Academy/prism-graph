@@ -37,8 +37,15 @@ final readonly class WakeReport
      */
     public function fenced(): string
     {
+        // Every line of item text is QUOTED ("> "), so only a real header can
+        // start a line with "[": stored text cannot forge another item, or a
+        // more trusted label for itself.
+        $quote = static fn (string $text): string => implode("\n", array_map(
+            static fn (string $line) => '> '.$line,
+            preg_split('/\R/u', Visible::mark($text)) ?: [''],
+        ));
         $body = implode("\n\n", array_map(
-            static fn (array $row) => '['.Visible::mark($row['layer'].' '.$row['item']->ref)."]\n".Visible::mark($row['item']->text),
+            static fn (array $row) => '['.(preg_replace('/\R/u', ' ', Visible::mark($row['layer'].' '.$row['item']->ref)) ?? '')."]\n".$quote($row['item']->text),
             $this->included,
         ));
         $tag = 'memory-'.substr(hash('sha256', $body), 0, 16);

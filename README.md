@@ -190,9 +190,15 @@ app(MemoryHooks::class)
 ```
 
 **What the adapter does:**
-- `TurnRecorder` stores each turn verbatim at the session's **agent** scope:
-  this person, with this agent, across all of their chats. Pass
-  `level: 'thread'` to keep episodes per chat instead.
+- `TurnRecorder` stores each turn verbatim:
+  - **What the user and the agent said** goes to the session's *channel*: this
+    person, this agent, this harness session scope, across every chat in it
+    (`newConversation()` keeps it).
+  - **Different scopes never merge.** For example, `ticket-A` never recalls
+    `ticket-B`, and a sub-agent's scope is its own.
+  - **Tool output stays in the chat that fetched it,** so an injection in a
+    web page does not follow the person into later chats.
+  - The `said:` and `tools:` parameters change either level.
 - Trust comes from the message type and the session, never from what the text
   claims:
   - user messages are `user`;
@@ -209,10 +215,20 @@ app(MemoryHooks::class)
   before every model call. Pass your own layers to recall with vectors,
   knowing the embedding call is then on every turn's path.
 
-**How a session maps to a scope:** you supply the tenant. The owner is the
-participant, the agent is the session's agent namespace, and the thread is
-the session's current chat. So a person's earlier chats are recalled in later
-ones, and nobody else's are.
+**How a session maps to a scope:** you supply the tenant. The rest comes from
+the session:
+- the **owner** is the participant;
+- the **agent** level is the session's agent namespace together with its
+  harness scope (the channel);
+- the **thread** is the session's current chat.
+
+So a person's earlier chats in a channel are recalled in later ones, and no
+other person's, agent's or channel's are.
+
+**Model-written prompts:** in a sub-agent session the "user" message is the
+parent model's task, and it is recorded as `agent`. If your app sends
+model-written prompts any other way (an orchestration loop, agent-to-agent
+delivery), pass `userTrust:` so they are not recorded as the user.
 
 Memory failures never fail a turn: the harness reports them and carries on.
 

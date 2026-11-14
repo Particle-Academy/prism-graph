@@ -15,14 +15,18 @@ use Prism\Harness\Sessions\Session;
  * The harness has no tenant: only the app knows which tenant a session
  * belongs to, so the app always supplies it. Everything else comes from the
  * session itself, never from anything a model said:
- *   owner  = the participant (type and id), hashed to a fixed-shape id
- *   agent  = the session's agent namespace; a session with none gets "a:-",
- *            which no real namespace can be (the harness forbids "-" alone)
+ *   owner  = the participant (type and id)
+ *   agent  = the session's agent namespace AND its session scope
  *   thread = the session's current thread (a new chat is a new thread)
  *
- * Long-term memory is recorded at the AGENT scope (see TurnRecorder), so a
- * person's earlier chats with an agent are recalled in later ones; the thread
- * level is what the wake-up reads from, which sees the agent level above it.
+ * WHY THE SESSION SCOPE IS PART OF THE AGENT LEVEL: a harness scope names a
+ * conversation channel ("chat", "ticket-4711", a sub-agent's
+ * "parent::sub::research"). Long-term memory spans the chats WITHIN a channel
+ * (newConversation() keeps it), but never crosses channels: a support agent's
+ * ticket for one customer must not recall another customer's ticket, and a
+ * sub-agent's fetched text must not seep into its parent's later chats.
+ *
+ * A session with no agent namespace uses "-", which no real namespace can be.
  */
 final class HarnessScopes
 {
@@ -37,23 +41,20 @@ final class HarnessScopes
             [$type, $id] = $participant instanceof ParticipantRef
                 ? [$participant->type, $participant->id]
                 : [$participant->getMorphClass(), (string) $participant->getKey()];
-            $agent = $session->agent();
 
             return new Scope(
                 is_string($tenant) ? $tenant : $tenant($session),
                 // JSON, not a separator: no field content can shift a boundary.
-                'p:'.substr(hash('sha256', json_encode([$type, $id], JSON_THROW_ON_ERROR)), 0, 40),
-                $agent === null ? 'a:-' : self::id('a:', $agent),
-                't:'.substr(hash('sha256', json_encode([$session->key(), (string) $session->thread()->getKey()], JSON_THROW_ON_ERROR)), 0, 40),
+                'p:'.self::digest([$type, $id]),
+                'a:'.self::digest([$session->agent() ?? '-', $session->scope()]),
+                't:'.self::digest([$session->key(), (string) $session->thread()->getKey()]),
             );
         };
     }
 
-    /** Keep readable ids readable; hash anything that does not fit a scope id. */
-    private static function id(string $prefix, string $value): string
+    /** @param list<string> $fields */
+    private static function digest(array $fields): string
     {
-        return preg_match('/^[A-Za-z0-9_.:@\/-]{1,150}$/D', $value) === 1 && $value !== '-'
-            ? $prefix.$value
-            : $prefix.'h'.substr(hash('sha256', $value), 0, 40);
+        return substr(hash('sha256', json_encode($fields, JSON_THROW_ON_ERROR)), 0, 40);
     }
 }
