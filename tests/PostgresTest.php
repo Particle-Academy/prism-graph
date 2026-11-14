@@ -82,6 +82,8 @@ final class PostgresTest extends TestCase
         $hits = $store->nearest($spec, [1, 0, 0], 2);
         $this->assertSame([str_repeat('a', 64), str_repeat('c', 64)], array_column($hits, 'chunk_id'));
         $this->assertEqualsWithDelta(1.0, $hits[0]['score'], 1e-6);
+        // CHAR(64) ids come back exact, so a stored vector is never reported missing.
+        $this->assertSame([str_repeat('d', 64)], $store->missing($spec, [str_repeat('a', 64), str_repeat('d', 64)]));
 
         $this->expectException(GraphException::class);
         $store->nearest(new IndexSpec('main', 'test', 'other-model', 3), [1, 0, 0], 1);

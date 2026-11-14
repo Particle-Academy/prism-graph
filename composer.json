@@ -9,8 +9,9 @@
     },
     "require-dev": {
         "ext-pdo_sqlite": "*",
-        "orchestra/testbench": "^9.0 || ^10.0",
-        "phpunit/phpunit": "^11.0"
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "phpunit/phpunit": "^11.0",
+        "particle-academy/prism-memory": "^0.4"
     },
     "suggest": {
         "particle-academy/prism": "Embeddings via Prism::embeddings()",

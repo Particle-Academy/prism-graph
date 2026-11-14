@@ -107,6 +107,45 @@ final class GraphTest extends TestCase
         $texts = array_map(static fn (Hit $h) => $h->chunk->text, $graph->search('zebra', 10));
         $this->assertContains('brute-force', $methods);
         $this->assertNotEmpty(array_filter($texts, static fn (string $t) => str_contains($t, 'zebra')), 'the unembedded chunk was hidden');
+
+        // Re-ingesting the same text heals it: the chunk gets its vector now,
+        // even though no new chunk was stored.
+        $zebra = fn () => array_values(array_filter($graph->search('zebra', 10), static fn (Hit $h) => str_contains($h->chunk->text, 'zebra')))[0];
+        $this->assertSame('text', $zebra()->method);
+        $report = $graph->ingest('late', 'file://late.md', "# Late\nzebra crossing notes\n", new MarkdownChunker(300, 400, 0));
+        $this->assertSame(0, $report->stored);
+        $this->assertSame('brute-force', $zebra()->method);
+    }
+
+    public function test_reingest_embeds_only_chunks_that_have_no_vector(): void
+    {
+        $embedder = new class implements Embedder
+        {
+            /** @var list<string> */
+            public array $seen = [];
+
+            public function spec(): IndexSpec
+            {
+                return new IndexSpec('main', 'test', 'letters', 2);
+            }
+
+            public function embed(array $texts): array
+            {
+                array_push($this->seen, ...$texts);
+
+                return array_map(static fn (string $t) => [1 + substr_count($t, 'a'), 1 + substr_count($t, 'e')], $texts);
+            }
+        };
+        $graph = new Graph(new PdoGraphStore($this->pdo), $this->pdo, vectors: new PdoVectorStore($this->pdo), embedder: $embedder);
+        $graph->ingest('doc', 'file://doc.md', $this->text(), new MarkdownChunker(300, 400, 0));
+        $this->assertCount(3, $embedder->seen);
+
+        $graph->ingest('doc', 'file://doc.md', $this->text(), new MarkdownChunker(300, 400, 0));
+        $this->assertCount(3, $embedder->seen, 'unchanged chunks were embedded again');
+
+        $graph->ingest('doc', 'file://doc.md', str_replace('Espresso', 'Drip', $this->text()), new MarkdownChunker(300, 400, 0));
+        $this->assertCount(4, $embedder->seen);
+        $this->assertStringContainsString('Drip', $embedder->seen[3]);
     }
 
     public function test_facts_flow_through_the_graph_and_reads_do_not_mutate(): void

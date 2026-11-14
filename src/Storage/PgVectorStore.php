@@ -96,6 +96,13 @@ final class PgVectorStore implements VectorStore
         );
     }
 
+    public function missing(IndexSpec $spec, array $chunkIds): array
+    {
+        $this->assertPinned($spec, $this->fingerprintOf($spec->name));
+
+        return Missing::filter($this->pdo, $this->vectors, $spec->name, $chunkIds);
+    }
+
     private function fingerprintOf(string $name): ?string
     {
         $statement = $this->pdo->prepare("SELECT fingerprint FROM {$this->indexes} WHERE name = ?");

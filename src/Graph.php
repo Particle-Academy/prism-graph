@@ -51,14 +51,27 @@ final class Graph
         $this->store->putSource($sourceId, $uri, $actual, $metadata);
         $stored = $this->store->putChunks($chunks);
 
-        if ($this->vectors !== null && $stored > 0) {
+        // Verbatim is stored first and never waits on embedding. Only chunks with
+        // no vector yet are embedded, so a failed embedding heals on the next
+        // ingest and unchanged chunks are not paid for twice.
+        if ($this->vectors !== null && $chunks !== []) {
             $spec = $this->embedder->spec();
             $this->vectors->ensureIndex($spec);
-            $vectors = $this->embedder->embed(array_map(static fn (Chunk $c) => $c->text, $chunks));
-            if (count($vectors) !== count($chunks)) {
-                throw new GraphException('The embedder returned a different number of vectors than chunks.');
+            $byId = [];
+            foreach ($chunks as $chunk) {
+                $byId[$chunk->id] = $chunk;
             }
-            $this->vectors->upsert($spec, array_combine(array_map(static fn (Chunk $c) => $c->id, $chunks), $vectors));
+            foreach (array_chunk(array_keys($byId), 500) as $ids) {
+                $todo = $this->vectors->missing($spec, $ids);
+                if ($todo === []) {
+                    continue;
+                }
+                $vectors = $this->embedder->embed(array_map(static fn (string $id) => $byId[$id]->text, $todo));
+                if (count($vectors) !== count($todo)) {
+                    throw new GraphException('The embedder returned a different number of vectors than chunks.');
+                }
+                $this->vectors->upsert($spec, array_combine($todo, $vectors));
+            }
         }
 
         return new IngestReport($sourceId, $actual, $chunker->recipe(), count($chunks), $stored);

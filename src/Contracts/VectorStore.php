@@ -32,6 +32,16 @@ interface VectorStore
      */
     public function nearest(IndexSpec $spec, array $query, int $k): array;
 
+    /**
+     * Which of these chunk ids have no vector in the index yet. Ingest embeds
+     * only these, so a failed embedding heals on the next ingest and unchanged
+     * chunks are never paid for twice. The graph passes at most 500 ids a call.
+     *
+     * @param  list<string>  $chunkIds
+     * @return list<string>
+     */
+    public function missing(IndexSpec $spec, array $chunkIds): array;
+
     /** Name of the search method, reported with results (e.g. "brute-force", "sqlite-vec", "pgvector"). */
     public function method(): string;
 }
