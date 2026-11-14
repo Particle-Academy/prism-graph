@@ -53,3 +53,11 @@ prism-graph is a graph system that ANY app builds on. impactium and Aion are one
 - **Source metadata is open.** Apps attach their own typed metadata (provenance, authority class and so on) through a schema they declare. The package doesn't hardcode impactium's fields.
 - **Wake-up layers are configurable.** Apps define the layers, their order and their budgets. Aion's L0–L3 is one example configuration, not a default.
 Unchanged, because they're general and part of the trust model: the verbatim floor, content-addressed ids, declared lossy transforms, triples that cite evidence with atomic supersede, query sanitizing, and reads that never mutate.
+
+## REVISION 2 (Wish, 2026-11-14): apps own their schema through migrations; the package provides plumbing and tools only
+
+- **The package dictates no app data shape.** Nodes and edges carry only the minimal core the plumbing needs: id, type, created and updated timestamps, plus the keys that link to chunks and facts. Every domain column is the APP's.
+- **Migrations, not hardcoded tables.** The package ships *publishable* base migrations (Laravel: `vendor:publish --tag=prism-graph-migrations`) that the app owns, edits and extends with its own migrations under normal development practice. Nothing creates tables implicitly at runtime.
+- **Configurable mapping.** Config maps the graph's roles to the app's tables and models (`nodes`, `edges`, `chunks`, `facts`, plus optional per-type tables), so an app can point a node type at its existing table. Custom columns are read and written through the app's own models or casts.
+- **What the package does provide:** the contracts (GraphStore, VectorStore, Chunker), chunking, ingest, traversal and query, fact supersede, wake assembly, harness tools, the storage adapters, and the trust rules (verbatim floor, content-addressed ids, cited facts, sanitized queries, reads never mutate), enforced on the core columns it owns.
+- **TS/Py ports** follow the same split: base schema files or migrations that the app owns, plus a configurable mapping.
