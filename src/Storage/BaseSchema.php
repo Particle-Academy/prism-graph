@@ -31,7 +31,7 @@ final class BaseSchema
             "CREATE TABLE {$t->chunks} (id CHAR(64) PRIMARY KEY, source_id VARCHAR(191) NOT NULL REFERENCES {$t->sources} (id),
                 text TEXT NOT NULL, byte_start INTEGER NOT NULL, byte_end INTEGER NOT NULL,
                 line_start INTEGER NOT NULL, line_end INTEGER NOT NULL, heading_path {$json} NOT NULL,
-                recipe VARCHAR(191) NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT {$now})",
+                recipe VARCHAR(191) NOT NULL, retired_at CHAR(27), created_at TIMESTAMP NOT NULL DEFAULT {$now})",
             "CREATE INDEX {$t->chunks}_source ON {$t->chunks} (source_id, byte_start)",
             "CREATE TABLE {$t->nodes} (id VARCHAR(191) PRIMARY KEY, type VARCHAR(100) NOT NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT {$now})",

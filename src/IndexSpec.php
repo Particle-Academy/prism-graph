@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prism\Graph;
 
 use InvalidArgumentException;
+use Prism\Graph\Support\Digest;
 
 /**
  * The embedder an index is pinned to. Vectors from a different provider,
@@ -30,6 +31,6 @@ final readonly class IndexSpec
     /** Stable identity of the embedder: two specs are compatible only if this matches. */
     public function fingerprint(): string
     {
-        return hash('sha256', implode("\x1f", [$this->provider, $this->model, (string) $this->dimensions, $this->recipe]));
+        return Digest::of('prism-graph/index@1', [$this->provider, $this->model, $this->dimensions, $this->recipe]);
     }
 }

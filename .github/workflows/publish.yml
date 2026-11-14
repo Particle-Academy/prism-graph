@@ -198,6 +198,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # `--notes-from-tag`, never `--generate-notes`.
       #
@@ -267,6 +268,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # The step this ecosystem was missing. A tag is not a release and a
       # release is not a distribution: particle-academy/prism-human-plus was

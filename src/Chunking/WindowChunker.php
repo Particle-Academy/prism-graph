@@ -22,8 +22,10 @@ class WindowChunker implements Chunker
         protected int $max = 1500,
         protected int $overlap = 150,
     ) {
-        if ($target < 1 || $max < $target || $overlap < 0 || $overlap >= $target) {
-            throw new InvalidArgumentException('Chunk sizes need 0 <= overlap < target <= max.');
+        // max >= 4: one UTF-8 character can be 4 bytes, and a window smaller
+        // than that would have to cut inside it.
+        if ($target < 1 || $max < $target || $max < 4 || $overlap < 0 || $overlap >= $target) {
+            throw new InvalidArgumentException('Chunk sizes need 0 <= overlap < target <= max, and max >= 4.');
         }
     }
 

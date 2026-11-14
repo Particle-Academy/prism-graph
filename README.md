@@ -44,7 +44,14 @@ From there they are your migrations:
   migrations.
 - Rename any table, then point `config/prism-graph.php` → `tables` at it.
 
-The graph only touches the columns it owns.
+The graph only reads and writes the columns it owns. **It does not filter on
+yours**, so a `tenant_id` column you add does not scope search, get, facts or
+the agent tools.
+
+> **One graph per trust domain.** In 0.1.0 a `Graph` reads everything in its
+> tables. To keep tenants apart, give each its own tables (a `TableMap` per
+> tenant) or its own connection. Never let one tenant's agent hold another
+> tenant's `Graph`.
 
 Embedding with Prism needs `particle-academy/prism` installed and a provider key
 in your app's Prism config.
@@ -84,6 +91,28 @@ embedder.
 Search with vectors on returns the vector hits first. It then fills from text
 search, so a chunk that has no vector yet can still be found.
 
+### A living corpus
+
+Re-ingest a source whenever it changes:
+- **Unchanged chunks** keep their ids, and their embeddings are not paid for again.
+- **New chunks** are stored and embedded.
+- **Text the source no longer contains** is **retired**: it leaves search at once.
+
+```php
+$report = $graph->ingest('handbook', 'file://handbook.md', $newMarkdown, new MarkdownChunker);
+$report->retired;              // chunks the source no longer contains
+
+$graph->retireSource('handbook');   // take a whole source out of search
+```
+
+A retired chunk is still readable by id, with `retiredAt` set, so a fact that
+cites it keeps its evidence. Restoring the text brings the chunk back.
+
+Retiring is not deleting: the text is still stored. To erase data, for
+example on a deletion request, delete the rows yourself in a migration or
+job: the facts that cite the source, their evidence rows, its vectors, its
+chunks, then the source.
+
 ## Without Laravel
 
 ```php
@@ -116,7 +145,7 @@ $graph->facts('shop');                          // what holds now
 $graph->facts('shop', '2026-03-01T00:00:00Z');  // what held then
 ```
 
-Times are UTC ISO 8601.
+Times are UTC ISO 8601 and come back in one fixed-width form (`2026-01-01T00:00:00.000000Z`), so they compare correctly whatever precision you passed. Impossible dates and windows that end before they start are refused.
 
 ## Agent tools
 
@@ -131,12 +160,17 @@ $tools = (new GraphTools(app(Graph::class)))->prismTools();
 
 - **Results:** JSON, with every passage carrying its chunk id so an answer can
   be checked against the source.
-- **Limits:** clamped, whatever the model asks for.
+- **Limits:** clamped, whatever the model asks for. Queries are capped at 4 KB.
 - **Ids:** malformed ids are refused before any query runs.
+- **Errors:** a tool never throws at the model. Validation messages come back
+  as `{"error": ...}`. Database errors become a fixed message, so table names
+  and SQL never reach the model's context.
 - **Writes:** no tool writes. If an agent should assert facts, build that tool
   in your app, with your own review step.
-- **Prompt injection:** passages are stored text. Treat them as data in your
-  prompts, not as instructions.
+- **Prompt injection:** passages are stored text. Characters a reader cannot
+  see are shown as `<U+XXXX>`: Unicode tag characters, bidi controls and
+  zero-width marks. Every tool description tells the model that passages are
+  data. Still treat them as data in your own prompts.
 
 ## Wake context
 

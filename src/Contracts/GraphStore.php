@@ -29,6 +29,15 @@ interface GraphStore
     /** @return list<Chunk> */
     public function chunksForSource(string $sourceId): array;
 
+    /**
+     * Mark every chunk of the source NOT in $keepIds as retired, and un-retire
+     * those in it. Retired chunks leave search but stay readable by id.
+     * Returns how many of the source's chunks are retired afterwards.
+     *
+     * @param  list<string>  $keepIds
+     */
+    public function retireExcept(string $sourceId, array $keepIds): int;
+
     public function putNode(string $id, string $type): void;
 
     public function putEdge(string $id, string $from, string $to, string $type): void;

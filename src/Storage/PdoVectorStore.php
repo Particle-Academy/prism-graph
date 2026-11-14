@@ -9,6 +9,7 @@ use PDO;
 use Prism\Graph\Contracts\VectorStore;
 use Prism\Graph\Exceptions\GraphException;
 use Prism\Graph\IndexSpec;
+use Prism\Graph\Support\Vectors;
 
 /**
  * Exact (brute-force) cosine search over vectors stored as packed float32 in
@@ -105,11 +106,21 @@ class PdoVectorStore implements VectorStore
         while (($row = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
             $bytes = is_resource($row['vector']) ? stream_get_contents($row['vector']) : $row['vector'];
             $v = $this->unpack((string) $bytes);
+            $denominator = count($v) === count($q) ? $qn * $this->norm($v) : 0.0;
+            // A row written by something other than this store can still be
+            // unscorable. Skip it rather than fail every search: its chunk
+            // stays reachable through the graph's text-search fill.
+            if (! is_finite($denominator) || $denominator <= 0.0) {
+                continue;
+            }
             $dot = 0.0;
             foreach ($q as $i => $x) {
                 $dot += $x * $v[$i];
             }
-            $scores[(string) $row['chunk_id']] = $dot / ($qn * $this->norm($v));
+            $score = $dot / $denominator;
+            if (is_finite($score)) {
+                $scores[(string) $row['chunk_id']] = $score;
+            }
         }
         arsort($scores);
 
@@ -150,19 +161,7 @@ class PdoVectorStore implements VectorStore
     /** @param list<float> $vector */
     protected function pack(IndexSpec $spec, array $vector): string
     {
-        if (count($vector) !== $spec->dimensions || ! array_is_list($vector)) {
-            throw new GraphException("Expected a list of {$spec->dimensions} floats for index [{$spec->name}].");
-        }
-        foreach ($vector as $x) {
-            if ((! is_int($x) && ! is_float($x)) || ! is_finite((float) $x)) {
-                throw new GraphException('Vectors must contain only finite numbers.');
-            }
-        }
-        if ($this->norm(array_map('floatval', $vector)) === 0.0) {
-            throw new GraphException('A zero vector has no direction and cannot be indexed or queried.');
-        }
-
-        return pack('g*', ...$vector);
+        return pack('g*', ...Vectors::float32($spec, $vector));
     }
 
     /** @return list<float> */

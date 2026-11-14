@@ -32,6 +32,7 @@ return new class extends Migration
             $table->integer('line_end');
             $table->json('heading_path');
             $table->string('recipe', 191);
+            $table->char('retired_at', 27)->nullable();
             $table->timestamp('created_at')->useCurrent();
             $table->foreign('source_id')->references('id')->on($t['sources']);
             $table->index(['source_id', 'byte_start']);

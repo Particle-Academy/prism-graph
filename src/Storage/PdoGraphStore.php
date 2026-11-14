@@ -19,7 +19,7 @@ use Throwable;
  */
 final class PdoGraphStore implements GraphStore
 {
-    private const TIME = '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/';
+    private const TIME = '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/D';
 
     private readonly string $driver;
 
@@ -58,6 +58,9 @@ final class PdoGraphStore implements GraphStore
                 if (! hash_equals($expected, $chunk->id)) {
                     throw new GraphException('A chunk id does not match its content; ids are content-addressed.');
                 }
+                if ($chunk->byteStart < 0 || strlen($chunk->text) !== $chunk->byteEnd - $chunk->byteStart) {
+                    throw new GraphException('A chunk text must be exactly the bytes of its span.');
+                }
                 $statement->execute([
                     $chunk->id, $chunk->sourceId, $chunk->text, $chunk->byteStart, $chunk->byteEnd,
                     $chunk->lineStart, $chunk->lineEnd, json_encode($chunk->headingPath, JSON_THROW_ON_ERROR), $chunk->recipe,
@@ -67,6 +70,25 @@ final class PdoGraphStore implements GraphStore
         });
 
         return $inserted;
+    }
+
+    public function retireExcept(string $sourceId, array $keepIds): int
+    {
+        $retired = 0;
+        $this->transaction(function () use ($sourceId, $keepIds, &$retired): void {
+            $now = gmdate('Y-m-d\TH:i:s').'.000000Z';
+            $this->run("UPDATE {$this->tables->chunks} SET retired_at = ? WHERE source_id = ? AND retired_at IS NULL", [$now, $sourceId]);
+            foreach (array_chunk(array_values(array_unique(array_map('strval', $keepIds))), 500) as $batch) {
+                $marks = implode(',', array_fill(0, count($batch), '?'));
+                $this->run("UPDATE {$this->tables->chunks} SET retired_at = NULL WHERE source_id = ? AND id IN ({$marks})", [$sourceId, ...$batch]);
+            }
+            $retired = (int) $this->select(
+                "SELECT COUNT(*) AS n FROM {$this->tables->chunks} WHERE source_id = ? AND retired_at IS NOT NULL",
+                [$sourceId],
+            )[0]['n'];
+        });
+
+        return $retired;
     }
 
     public function getChunks(array $ids): array
@@ -114,12 +136,12 @@ final class PdoGraphStore implements GraphStore
     public function supersede(string $oldId, Fact $replacement): void
     {
         $this->transaction(function () use ($oldId, $replacement): void {
-            $this->time($replacement->validFrom);
+            $from = $this->time($replacement->validFrom);
             // A write first, so SQLite takes the writer lock before any read in this transaction.
             $closed = $this->run(
                 "UPDATE {$this->tables->facts} SET valid_to = ?, superseded_by = ?
                  WHERE id = ? AND valid_to IS NULL AND valid_from <= ?",
-                [$replacement->validFrom, $replacement->id, $oldId, $replacement->validFrom],
+                [$from, $replacement->id, $oldId, $from],
             );
             if ($closed !== 1) {
                 throw new GraphException('Only a fact still in force, valid before the replacement starts, can be superseded.');
@@ -133,7 +155,7 @@ final class PdoGraphStore implements GraphStore
         if ($at === null) {
             $rows = $this->select("SELECT * FROM {$this->tables->facts} WHERE subject = ? AND valid_to IS NULL ORDER BY valid_from, id", [$subject]);
         } else {
-            $this->time($at);
+            $at = $this->time($at);
             $rows = $this->select(
                 "SELECT * FROM {$this->tables->facts} WHERE subject = ? AND valid_from <= ? AND (valid_to IS NULL OR valid_to > ?) ORDER BY valid_from, id",
                 [$subject, $at, $at],
@@ -145,9 +167,13 @@ final class PdoGraphStore implements GraphStore
 
     private function insertFact(Fact $fact): void
     {
-        $this->time($fact->validFrom);
-        if ($fact->validTo !== null) {
-            $this->time($fact->validTo);
+        $from = $this->time($fact->validFrom);
+        $to = $fact->validTo === null ? null : $this->time($fact->validTo);
+        if ($to !== null && $to < $from) {
+            throw new GraphException('A fact cannot end before it starts.');
+        }
+        if ($fact->supersededBy !== null) {
+            throw new GraphException('superseded_by is set only by supersede(), never asserted.');
         }
         $evidence = array_values(array_unique($fact->evidence));
         if ($evidence === []) {
@@ -159,7 +185,7 @@ final class PdoGraphStore implements GraphStore
         $this->run(
             "INSERT INTO {$this->tables->facts} (id, subject, predicate, object, valid_from, valid_to, superseded_by)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [$fact->id, $fact->subject, $fact->predicate, $fact->object, $fact->validFrom, $fact->validTo, $fact->supersededBy],
+            [$fact->id, $fact->subject, $fact->predicate, $fact->object, $from, $to, null],
         );
         $statement = $this->pdo->prepare("INSERT INTO {$this->tables->evidence} (fact_id, chunk_id) VALUES (?, ?)");
         foreach ($evidence as $chunkId) {
@@ -167,11 +193,23 @@ final class PdoGraphStore implements GraphStore
         }
     }
 
-    private function time(string $value): void
+    /**
+     * Validate a UTC ISO 8601 time and return it in ONE fixed-width form
+     * (microseconds, Z). Stored times are compared as strings, so every time
+     * must share a precision: otherwise "...00Z" sorts after "...00.9Z".
+     */
+    private function time(string $value): string
     {
-        if (preg_match(self::TIME, $value) !== 1) {
+        if (preg_match(self::TIME, $value, $m) !== 1) {
             throw new InvalidArgumentException('Times must be UTC ISO 8601, e.g. 2026-11-14T00:00:00Z.');
         }
+        $base = substr($value, 0, 19);
+        $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s', $base, new \DateTimeZone('UTC'));
+        if ($parsed === false || $parsed->format('Y-m-d\TH:i:s') !== $base) {
+            throw new InvalidArgumentException('Times must name a real UTC date and time.');
+        }
+
+        return $base.'.'.str_pad(substr($m[1] ?? '', 1), 6, '0').'Z';
     }
 
     /** @param array<string, mixed> $row */
@@ -181,6 +219,7 @@ final class PdoGraphStore implements GraphStore
             (string) $row['id'], (string) $row['source_id'], (string) $row['text'],
             (int) $row['byte_start'], (int) $row['byte_end'], (int) $row['line_start'], (int) $row['line_end'],
             json_decode((string) $row['heading_path'], true, 16, JSON_THROW_ON_ERROR), (string) $row['recipe'],
+            isset($row['retired_at']) ? trim((string) $row['retired_at']) : null,
         );
     }
 

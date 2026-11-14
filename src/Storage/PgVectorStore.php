@@ -9,6 +9,7 @@ use PDO;
 use Prism\Graph\Contracts\VectorStore;
 use Prism\Graph\Exceptions\GraphException;
 use Prism\Graph\IndexSpec;
+use Prism\Graph\Support\Vectors;
 
 /**
  * VectorStore on PostgreSQL with the pgvector extension. Distance is computed
@@ -125,21 +126,9 @@ final class PgVectorStore implements VectorStore
     /** A pgvector text literal built only from validated finite numbers. @param list<float> $vector */
     private function literal(IndexSpec $spec, array $vector): string
     {
-        if (count($vector) !== $spec->dimensions || ! array_is_list($vector)) {
-            throw new GraphException("Expected a list of {$spec->dimensions} floats for index [{$spec->name}].");
-        }
-        $sum = 0.0;
-        $parts = [];
-        foreach ($vector as $x) {
-            if ((! is_int($x) && ! is_float($x)) || ! is_finite((float) $x)) {
-                throw new GraphException('Vectors must contain only finite numbers.');
-            }
-            $sum += $x * $x;
-            $parts[] = sprintf('%.9g', (float) $x);
-        }
-        if ($sum === 0.0) {
-            throw new GraphException('A zero vector has no direction and cannot be indexed or queried.');
-        }
+        // %H, not %g: %g follows the C locale, and under de_DE "0.5" becomes
+        // "0,5", which pgvector's unsized column reads as two dimensions.
+        $parts = array_map(static fn (float $x) => sprintf('%.9H', $x), Vectors::float32($spec, $vector));
 
         return '['.implode(',', $parts).']';
     }

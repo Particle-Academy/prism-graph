@@ -74,7 +74,7 @@ final class StoreTest extends TestCase
         $this->assertSame(['f2'], array_map(fn (Fact $f) => $f->id, $this->store->factsAbout('aion')));
         $this->assertSame(['f1'], array_map(fn (Fact $f) => $f->id, $this->store->factsAbout('aion', '2026-03-01T00:00:00Z')));
         $old = $this->store->factsAbout('aion', '2026-03-01T00:00:00Z')[0];
-        $this->assertSame(['2026-06-01T00:00:00Z', 'f2'], [$old->validTo, $old->supersededBy]);
+        $this->assertSame(['2026-06-01T00:00:00.000000Z', 'f2'], [$old->validTo, $old->supersededBy]);
 
         // A replacement with bad evidence rolls back the close: f2 stays in force.
         try {

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Prism\Graph;
 
+use Prism\Graph\Support\Digest;
+
 /**
  * One verbatim slice of a source. The text is exactly the source bytes in
  * [byteStart, byteEnd); nothing derived ever replaces it.
@@ -23,6 +25,9 @@ final readonly class Chunk
         public int $lineEnd,
         public array $headingPath,
         public string $recipe,
+        // Set when the chunk's source no longer contains it. A retired chunk is
+        // left out of search, but stays readable by id so citations still resolve.
+        public ?string $retiredAt = null,
     ) {}
 
     /**
@@ -31,6 +36,6 @@ final readonly class Chunk
      */
     public static function idFor(string $recipe, string $sourceId, int $byteStart, int $byteEnd, string $text): string
     {
-        return hash('sha256', implode("\x1f", [$recipe, $sourceId, (string) $byteStart, (string) $byteEnd, $text]));
+        return Digest::of('prism-graph/chunk@1', [$recipe, $sourceId, $byteStart, $byteEnd, $text]);
     }
 }
