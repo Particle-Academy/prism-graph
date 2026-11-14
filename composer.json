@@ -1,6 +1,6 @@
 {
     "name": "particle-academy/prism-graph",
-    "description": "Configurable knowledge graphs with embeddings for Prism: verbatim chunks, content-addressed ids, pinned embedders and validity-window facts.",
+    "description": "Long-term memory for AI agents: scoped (tenant, owner, agent, thread), verbatim evidence with trust classes, cited bi-temporal facts, hybrid search and erasure. Built for prism-harness and ACP agents.",
     "type": "library",
     "license": "MIT",
     "require": {
@@ -11,10 +11,12 @@
         "ext-pdo_sqlite": "*",
         "orchestra/testbench": "^10.0 || ^11.0",
         "phpunit/phpunit": "^11.0",
-        "particle-academy/prism": ">=0.147.2 <1.0"
+        "particle-academy/prism": ">=0.147.2 <1.0",
+        "particle-academy/prism-harness": "^0.24"
     },
     "suggest": {
         "particle-academy/prism": "Embeddings via Prism::embeddings()",
+        "particle-academy/prism-harness": "Memory for harness agents: WakeContext and TurnRecorder (0.24+)",
         "ext-pdo_sqlite": "SQLite storage",
         "ext-pdo_pgsql": "PostgreSQL storage (and pgvector)"
     },

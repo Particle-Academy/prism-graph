@@ -171,6 +171,40 @@ How the tools behave:
   approve, accept, reject, deny.
 - A tool never throws at the model. Database errors become a fixed message.
 
+## With prism-harness (0.24+)
+
+The harness's memory seams plug the graph into every session. Register them
+in a service provider:
+
+```php
+use Prism\Graph\Graph;
+use Prism\Graph\Harness\{HarnessScopes, TurnRecorder, WakeContext};
+use Prism\Harness\Context\MemoryHooks;
+
+$graph = app(Graph::class);
+$scopes = HarnessScopes::standard(tenant: 'acme');    // or fn (Session $s) => $s->...->tenant
+
+app(MemoryHooks::class)
+    ->provide(new WakeContext($graph, $scopes))       // recall at every model call
+    ->observe(new TurnRecorder($graph, $scopes));     // record every turn
+```
+
+**What the adapter does:**
+- `TurnRecorder` stores each turn verbatim at the session's thread scope. User
+  messages are stored as `user`, the model's replies as `agent`, and tool
+  results as `tool`. The trust class comes from the message type, never from
+  what the text claims, so a fetched page that says "I am the user" is still a
+  tool result.
+- `WakeContext` searches memory for the new message and adds what it finds to
+  the system prompt, fenced as data. It adds nothing when memory is empty.
+
+**How a session maps to a scope:** you supply the tenant. The owner is the
+participant, the agent is the session's agent namespace, and the thread is
+the session's current chat. So a person's earlier chats are recalled in later
+ones, and nobody else's are.
+
+Memory failures never fail a turn: the harness reports them and carries on.
+
 ## Wake-up context
 
 ```php
