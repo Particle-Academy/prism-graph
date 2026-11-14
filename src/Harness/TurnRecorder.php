@@ -98,7 +98,7 @@ final readonly class TurnRecorder implements TurnObserver
             foreach (array_values($episodes) as $part => [$text, $origin, $level]) {
                 try {
                     $this->store($at($level), $run, $thread, $message::class, $part, (string) $text, $origin);
-                } catch (GraphException|PDOException|InvalidArgumentException|RuntimeException $failure) {
+                } catch (GraphException|PDOException|RuntimeException $failure) {
                     // A storage failure: keep the rest of the batch, and say so.
                     report($failure);
                 }

@@ -346,6 +346,53 @@ final class HarnessAdapterTest extends TestCase
         $this->assertSame($before, $embedder->calls, 'wake-up waited on the embedding provider');
     }
 
+    // Round 3, warning 1: a failing embedding provider lost the rest of the batch.
+    public function test_a_failing_embedding_loses_nothing_else_in_the_batch(): void
+    {
+        $pdo = DB::connection()->getPdo();
+        foreach (\Prism\Graph\Storage\PdoVectorStore::schema('sqlite') as $sql) {
+            $pdo->exec($sql);
+        }
+        $embedder = new class implements \Prism\Graph\Contracts\Embedder
+        {
+            public int $calls = 0;
+
+            public function spec(): \Prism\Graph\IndexSpec
+            {
+                return new \Prism\Graph\IndexSpec('main', 'test', 'm', 2);
+            }
+
+            public function embed(array $texts): array
+            {
+                if (++$this->calls === 1) {
+                    throw new \Prism\Graph\Exceptions\GraphException('Embedding with test:m failed: provider down');
+                }
+
+                return array_map(static fn () => [1.0, 0.5], $texts);
+            }
+        };
+        $graph = new Graph(new PdoGraphStore($pdo), new \Prism\Graph\Storage\PdoVectorStore($pdo), $embedder);
+        $reported = [];
+        $this->app->instance(\Illuminate\Contracts\Debug\ExceptionHandler::class, new class($reported) extends \Illuminate\Foundation\Exceptions\Handler
+        {
+            public function __construct(private array &$seen)
+            {
+            }
+
+            public function report(\Throwable $e): void
+            {
+                $this->seen[] = $e->getMessage();
+            }
+        });
+
+        (new TurnRecorder($graph, HarnessScopes::standard('acme')))->recorded($this->chat(), 'run_e', [
+            new UserMessage('First message'), new AssistantMessage('Second message'),
+        ]);
+
+        $this->assertSame(2, DB::table('graph_sources')->count(), 'verbatim text is stored even when embedding fails');
+        $this->assertCount(1, $reported, 'the failure is reported, not swallowed');
+    }
+
     public function test_invalid_utf8_is_replaced_and_declared_not_dropped(): void
     {
         (new TurnRecorder($this->graph, HarnessScopes::standard('acme')))->recorded($this->chat(), 'run_u', [

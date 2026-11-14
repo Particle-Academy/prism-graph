@@ -197,7 +197,10 @@ app(MemoryHooks::class)
   - **Different scopes never merge.** For example, `ticket-A` never recalls
     `ticket-B`, and a sub-agent's scope is its own.
   - **Tool output stays in the chat that fetched it,** so an injection in a
-    web page does not follow the person into later chats.
+    web page does not follow the person into later chats. If the *model*
+    restates that text ("the page says…"), its reply is the agent's own words
+    and is recalled later, labelled `trust:agent`. A fact resting only on
+    agent words is a belief, never an accepted fact.
   - The `said:` and `tools:` parameters change either level.
 - Trust comes from the message type and the session, never from what the text
   claims:

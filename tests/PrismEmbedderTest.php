@@ -52,6 +52,17 @@ final class PrismEmbedderTest extends TestCase
         (new PrismEmbedder($this->spec()))->embed(['a', 'b']);
     }
 
+    public function test_a_provider_failure_surfaces_as_a_graph_exception(): void
+    {
+        // A real failure inside Prism, not a fake: the provider does not exist.
+        try {
+            (new PrismEmbedder(new IndexSpec('main', 'no-such-provider', 'm', 3)))->embed(['a']);
+            $this->fail('the provider failure was not raised');
+        } catch (GraphException $e) {
+            $this->assertNotNull($e->getPrevious(), 'the original failure is kept as the cause');
+        }
+    }
+
     public function test_a_vector_of_the_wrong_width_is_refused_not_stored(): void
     {
         Prism::fake([$this->response([[1, 0]])]);
