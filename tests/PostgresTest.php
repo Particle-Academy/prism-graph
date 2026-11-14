@@ -38,7 +38,8 @@ final class PostgresTest extends TestCase
         $this->pdo = new PDO($dsn, getenv('PRISM_GRAPH_TEST_PG_USER') ?: null, getenv('PRISM_GRAPH_TEST_PG_PASSWORD') ?: null);
         $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $this->pdo->exec('CREATE EXTENSION IF NOT EXISTS vector');
-        $this->schema = 'pg_'.bin2hex(random_bytes(6));
+        // "pg_" is reserved for PostgreSQL's own schemas.
+        $this->schema = 'graph_test_'.bin2hex(random_bytes(6));
         $this->pdo->exec("CREATE SCHEMA {$this->schema}");
         $this->pdo->exec("SET search_path TO {$this->schema}, public");
         foreach ([...BaseSchema::statements('pgsql'), ...array_slice(PgVectorStore::schema(), 1)] as $sql) {
