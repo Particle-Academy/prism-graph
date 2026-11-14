@@ -11,6 +11,7 @@ use Prism\Graph\Exceptions\GraphException;
 use Prism\Graph\Fact;
 use Prism\Graph\Origin;
 use Prism\Graph\ScopedGraph;
+use Prism\Graph\Support\Visible;
 use Prism\Graph\Trust;
 
 /**
@@ -209,21 +210,9 @@ final readonly class MemoryTools
         ] + ($c->retiredAt === null ? [] : ['retired_at' => $c->retiredAt, 'note' => 'The source no longer contains this text.']);
     }
 
-    /**
-     * Stored text is DATA. Characters a reader cannot see (Unicode tag
-     * characters, bidi controls, zero-width marks) are shown as <U+XXXX>, so
-     * they cannot carry hidden instructions into a model's context. Ids still
-     * address the exact stored bytes.
-     */
     private function visible(string $text): string
     {
-        $text = mb_scrub($text, 'UTF-8');
-
-        return (string) preg_replace_callback(
-            '/[\x{E0000}-\x{E007F}\x{202A}-\x{202E}\x{2066}-\x{2069}\x{200B}-\x{200F}\x{2060}-\x{2064}\x{FEFF}\x{061C}\x{180E}]/u',
-            static fn (array $m) => sprintf('<U+%04X>', mb_ord($m[0], 'UTF-8')),
-            $text,
-        );
+        return Visible::mark($text);
     }
 
     /** @param array<string, mixed> $data */

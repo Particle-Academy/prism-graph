@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Prism\Graph\Wake;
 
+use Prism\Graph\Support\Visible;
+
 final readonly class WakeReport
 {
     /**
@@ -36,7 +38,7 @@ final readonly class WakeReport
     public function fenced(): string
     {
         $body = implode("\n\n", array_map(
-            static fn (array $row) => "[{$row['layer']} {$row['item']->ref}]\n{$row['item']->text}",
+            static fn (array $row) => '['.Visible::mark($row['layer'].' '.$row['item']->ref)."]\n".Visible::mark($row['item']->text),
             $this->included,
         ));
         $tag = 'memory-'.substr(hash('sha256', $body), 0, 16);

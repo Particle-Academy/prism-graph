@@ -50,36 +50,49 @@ final class PdoGraphStore implements GraphStore
         $this->clock = $clock ?? static fn (): string => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.u\Z');
     }
 
-    public function putSource(Scope $scope, string $key, string $uri, string $sha256, array $metadata, Origin $origin, ?string $occurredAt = null): string
+    public function storeSource(Scope $scope, string $key, string $uri, string $sha256, array $metadata, Origin $origin, ?string $occurredAt, array $chunks): array
     {
         $this->key($key);
         $id = $scope->qualify('source', $key);
         $occurred = $occurredAt === null ? null : $this->time($occurredAt);
-        $this->run(
-            "INSERT INTO {$this->tables->sources}
-             (id, source_key, tenant_id, owner_id, agent_id, thread_id, uri, sha256, metadata, trust, writer, occurred_at, recorded_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT (id) DO UPDATE SET uri = excluded.uri, sha256 = excluded.sha256, metadata = excluded.metadata,
-                trust = excluded.trust, writer = excluded.writer, occurred_at = excluded.occurred_at",
-            [$id, $key, ...array_values($scope->toArray()), $uri, $sha256, json_encode($metadata, JSON_THROW_ON_ERROR),
-                $origin->trust->value, $origin->writer, $occurred, $this->now()],
-        );
+        $stored = 0;
+        $retired = 0;
 
-        return $id;
-    }
+        // ONE transaction for the source, its chunks and their retirement, so an
+        // erase can never land between them and leave orphaned text behind.
+        $this->transaction(function () use ($scope, $key, $id, $uri, $sha256, $metadata, $origin, $occurred, $chunks, &$stored, &$retired): void {
+            $existing = $this->select("SELECT trust FROM {$this->tables->sources} WHERE id = ?", [$id]);
+            // TRUST IS IMMUTABLE. A key first written as tool output and later
+            // re-ingested "as a document" would otherwise relabel every chunk it
+            // ever held, and the acceptance policy reads that label. To change
+            // trust, erase the source and ingest it again.
+            if ($existing !== [] && (string) $existing[0]['trust'] !== $origin->trust->value) {
+                throw new GraphException("Source [{$key}] was stored with trust [{$existing[0]['trust']}]; trust cannot change. Erase it and ingest again.");
+            }
+            $this->run(
+                "INSERT INTO {$this->tables->sources}
+                 (id, source_key, tenant_id, owner_id, agent_id, thread_id, uri, sha256, metadata, trust, writer, occurred_at, recorded_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT (id) DO UPDATE SET uri = excluded.uri, sha256 = excluded.sha256, metadata = excluded.metadata,
+                    writer = excluded.writer, occurred_at = excluded.occurred_at",
+                [$id, $key, ...array_values($scope->toArray()), $uri, $sha256, json_encode($metadata, JSON_THROW_ON_ERROR),
+                    $origin->trust->value, $origin->writer, $occurred, $this->now()],
+            );
 
-    public function putChunks(array $chunks): int
-    {
-        $inserted = 0;
-        $this->transaction(function () use ($chunks, &$inserted): void {
             $statement = $this->pdo->prepare(
                 "INSERT INTO {$this->tables->chunks}
                  (id, source_id, text, byte_start, byte_end, line_start, line_end, heading_path, recipe)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
             );
+            $keep = [];
             foreach ($chunks as $chunk) {
                 if (! $chunk instanceof Chunk) {
-                    throw new InvalidArgumentException('putChunks() takes Chunk instances.');
+                    throw new InvalidArgumentException('storeSource() takes Chunk instances.');
+                }
+                // A chunk can only be written into the source being stored: the
+                // caller cannot use this source's scope to write into another.
+                if ($chunk->sourceId !== $id) {
+                    throw new GraphException('A chunk belongs to a different source than the one being stored.');
                 }
                 $expected = Chunk::idFor($chunk->recipe, $chunk->sourceId, $chunk->byteStart, $chunk->byteEnd, $chunk->text);
                 if (! hash_equals($expected, $chunk->id)) {
@@ -92,29 +105,37 @@ final class PdoGraphStore implements GraphStore
                     $chunk->id, $chunk->sourceId, $chunk->text, $chunk->byteStart, $chunk->byteEnd,
                     $chunk->lineStart, $chunk->lineEnd, json_encode($chunk->headingPath, JSON_THROW_ON_ERROR), $chunk->recipe,
                 ]);
-                $inserted += $statement->rowCount();
+                $stored += $statement->rowCount();
+                $keep[] = $chunk->id;
             }
+            $retired = $this->retireExcept($id, $keep);
         });
 
-        return $inserted;
+        return ['source' => $id, 'stored' => $stored, 'retired' => $retired];
     }
 
-    public function retireExcept(string $sourceId, array $keepIds): int
+    public function retireSource(Scope $scope, string $key): int
     {
         $retired = 0;
-        $this->transaction(function () use ($sourceId, $keepIds, &$retired): void {
-            $this->run("UPDATE {$this->tables->chunks} SET retired_at = ? WHERE source_id = ? AND retired_at IS NULL", [$this->now(), $sourceId]);
-            foreach (array_chunk(array_values(array_unique(array_map('strval', $keepIds))), 500) as $batch) {
-                $marks = $this->marks($batch);
-                $this->run("UPDATE {$this->tables->chunks} SET retired_at = NULL WHERE source_id = ? AND id IN ({$marks})", [$sourceId, ...$batch]);
-            }
-            $retired = (int) $this->select(
-                "SELECT COUNT(*) AS n FROM {$this->tables->chunks} WHERE source_id = ? AND retired_at IS NOT NULL",
-                [$sourceId],
-            )[0]['n'];
+        $this->transaction(function () use ($scope, $key, &$retired): void {
+            $retired = $this->retireExcept($scope->qualify('source', $key), []);
         });
 
         return $retired;
+    }
+
+    /** @param list<string> $keepIds */
+    private function retireExcept(string $sourceId, array $keepIds): int
+    {
+        $this->run("UPDATE {$this->tables->chunks} SET retired_at = ? WHERE source_id = ? AND retired_at IS NULL", [$this->now(), $sourceId]);
+        foreach (array_chunk(array_values(array_unique($keepIds)), 500) as $batch) {
+            $this->run("UPDATE {$this->tables->chunks} SET retired_at = NULL WHERE source_id = ? AND id IN ({$this->marks($batch)})", [$sourceId, ...$batch]);
+        }
+
+        return (int) $this->select(
+            "SELECT COUNT(*) AS n FROM {$this->tables->chunks} WHERE source_id = ? AND retired_at IS NOT NULL",
+            [$sourceId],
+        )[0]['n'];
     }
 
     public function getChunks(Scope $reader, array $ids): array
@@ -169,7 +190,7 @@ final class PdoGraphStore implements GraphStore
             $fts = $this->tables->fts();
             $rows = $this->select(
                 "SELECT c.id AS chunk_id, -bm25({$fts}) AS score
-                 FROM {$fts} JOIN {$this->tables->chunks} c ON c.rowid = {$fts}.rowid
+                 FROM {$fts} JOIN {$this->tables->chunks} c ON c.seq = {$fts}.rowid
                  JOIN {$this->tables->sources} s ON s.id = c.source_id
                  WHERE {$fts} MATCH ? AND c.retired_at IS NULL AND {$visible}
                  ORDER BY score DESC, c.id LIMIT {$limit}",
@@ -247,7 +268,7 @@ final class PdoGraphStore implements GraphStore
     public function accept(Scope $scope, string $key): void
     {
         $changed = $this->run(
-            "UPDATE {$this->tables->facts} SET status = ? WHERE id = ? AND status = ? AND expired_at IS NULL",
+            "UPDATE {$this->tables->facts} SET status = ? WHERE id = ? AND status = ? AND expired_at IS NULL AND valid_to IS NULL",
             [FactStatus::Accepted->value, $scope->qualify('fact', $key), FactStatus::Proposed->value],
         );
         if ($changed !== 1) {
@@ -360,6 +381,11 @@ final class PdoGraphStore implements GraphStore
         $chunks = $this->getChunks($scope, $evidence);
         if (count($chunks) !== count($evidence)) {
             throw new GraphException('Every evidence id must name a stored chunk visible from the fact\'s scope.');
+        }
+        // Text its source no longer contains cannot become NEW evidence: a
+        // retired chunk is history, kept so old citations resolve.
+        if (array_filter($chunks, static fn (Chunk $c) => $c->retiredAt !== null) !== []) {
+            throw new GraphException('A retired chunk cannot be cited as new evidence.');
         }
         $status = $policy->decide(array_map(static fn (Chunk $c) => $c->trust ?? Trust::System, $chunks));
         $now = $this->now();

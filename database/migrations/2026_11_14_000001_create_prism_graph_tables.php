@@ -42,7 +42,9 @@ return new class extends Migration
             $table->index(['tenant_id', 'owner_id', 'agent_id', 'thread_id']);
         });
         Schema::create($t['chunks'], function (Blueprint $table) use ($t) {
-            $table->char('id', 64)->primary();
+            // seq: the explicit integer key SQLite's full-text index joins on.
+            $table->id('seq');
+            $table->char('id', 64)->unique();
             $table->char('source_id', 64);
             $table->text('text');
             $table->integer('byte_start');

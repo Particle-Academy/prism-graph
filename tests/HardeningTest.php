@@ -131,12 +131,12 @@ final class HardeningTest extends TestCase
 
     public function test_a_chunk_whose_text_is_not_its_span_is_refused(): void
     {
-        $sourceId = $this->store()->putSource(self::acme(), 'd', 'f://d', hash('sha256', 'x'), [], self::user());
+        $sourceId = self::acme()->qualify('source', 'd');
         $text = 'the real text';
         $lie = new Chunk(Chunk::idFor('r', $sourceId, 0, 3, $text), $sourceId, $text, 0, 3, 1, 1, [], 'r');
 
         $this->expectException(GraphException::class);
-        $this->store()->putChunks([$lie]);
+        $this->store()->storeSource(self::acme(), 'd', 'f://d', hash('sha256', $text), [], self::user(), null, [$lie]);
     }
 
     public function test_times_compare_correctly_whatever_their_precision(): void

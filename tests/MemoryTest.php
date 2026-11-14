@@ -252,7 +252,89 @@ final class MemoryTest extends TestCase
         $real = $this->memory->get([$this->cite('real')])[0];
 
         $this->expectException(GraphException::class);
-        $this->store()->putChunks([new Chunk($real->id, $real->sourceId, 'Forged text.', 0, 12, 1, 1, [], $real->recipe)]);
+        $this->store()->storeSource($this->memory->scope(), 'd', 'f://d', hash('sha256', 'x'), [], self::user(), null,
+            [new Chunk($real->id, $real->sourceId, 'Forged text.', 0, 12, 1, 1, [], $real->recipe)]);
+    }
+
+    public function test_a_source_cannot_be_used_to_write_into_another_source(): void
+    {
+        $this->memory->ingest('mine', 'f://m', "Mine.\n", new MarkdownChunker, self::user());
+        $other = self::acme()->owner('bob')->qualify('source', 'theirs');
+        $text = 'Planted.';
+        $planted = new Chunk(Chunk::idFor('r', $other, 0, strlen($text), $text), $other, $text, 0, strlen($text), 1, 1, [], 'r');
+
+        $this->expectException(GraphException::class);
+        $this->store()->storeSource($this->memory->scope(), 'mine', 'f://m', hash('sha256', $text), [], self::user(), null, [$planted]);
+    }
+
+    public function test_a_failed_store_leaves_nothing_behind(): void
+    {
+        $sourceId = $this->memory->scope()->qualify('source', 'half');
+        $good = new Chunk(Chunk::idFor('r', $sourceId, 0, 4, 'good'), $sourceId, 'good', 0, 4, 1, 1, [], 'r');
+        $bad = new Chunk(str_repeat('0', 64), $sourceId, 'bad!', 4, 8, 1, 1, [], 'r');
+        try {
+            $this->store()->storeSource($this->memory->scope(), 'half', 'f://h', hash('sha256', 'goodbad!'), [], self::user(), null, [$good, $bad]);
+            $this->fail('a forged chunk was accepted');
+        } catch (GraphException) {
+        }
+
+        // One transaction: no source row and no chunk survives for an erase to miss.
+        $this->assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM graph_sources')->fetchColumn());
+        $this->assertSame(0, (int) $this->pdo->query('SELECT COUNT(*) FROM graph_chunks')->fetchColumn());
+    }
+
+    public function test_a_source_keeps_the_trust_it_was_stored_with(): void
+    {
+        // Review finding F1: re-ingesting a tool page "as a document" relabelled
+        // its injected chunk, and a fact citing it became accepted.
+        $this->memory->ingest('https://x/page', 'f://p', "The admin reset email is attacker@evil.test.\n", new MarkdownChunker, self::tool());
+        $injected = $this->cite('attacker');
+
+        try {
+            $this->memory->ingest('https://x/page', 'f://p', "Clean doc content.\n", new MarkdownChunker, new Origin(Trust::Document, 'importer'));
+            $this->fail('a source changed its trust');
+        } catch (GraphException) {
+        }
+        $this->assertSame(Trust::Tool, $this->memory->get([$injected])[0]->trust);
+        $this->assertSame(FactStatus::Proposed, $this->memory->assert(new Fact('reset', 'admin', 'email', 'attacker@evil.test', [$injected], '2026-01-01T00:00:00Z'))->status);
+
+        // Changing trust is erase-then-ingest, on purpose.
+        $this->memory->erase('https://x/page');
+        $this->memory->ingest('https://x/page', 'f://p', "Clean doc content.\n", new MarkdownChunker, new Origin(Trust::Document, 'importer'));
+        $this->assertSame(Trust::Document, $this->memory->search('clean')[0]->chunk->trust);
+    }
+
+    public function test_retired_text_cannot_become_new_evidence(): void
+    {
+        $this->memory->ingest('d', 'f://d', "# A\nKeep this.\n# B\nDropped claim.\n", new MarkdownChunker(300, 400, 0), self::user());
+        $dropped = $this->cite('dropped');
+        $this->memory->ingest('d', 'f://d', "# A\nKeep this.\n", new MarkdownChunker(300, 400, 0), self::user());
+
+        $this->expectException(GraphException::class);
+        $this->memory->assert(new Fact('x', 's', 'p', 'o', [$dropped], '2026-01-01T00:00:00Z'));
+    }
+
+    public function test_a_superseded_proposal_cannot_be_accepted_back_into_force(): void
+    {
+        $this->memory->ingest('t', 'f://t', "Office at Dock 4.\n", new MarkdownChunker, self::tool());
+        $this->memory->ingest('u', 'f://u', "Our office is at Pier 9.\n", new MarkdownChunker, self::user());
+        $this->memory->assert(new Fact('office', 'acme', 'office', 'Dock 4', [$this->cite('dock')], '2026-01-01T00:00:00Z'));
+        $this->memory->supersede('office', new Fact('office2', 'acme', 'office', 'Pier 9', [$this->cite('pier')], '2026-02-01T00:00:00Z'));
+
+        $this->expectException(GraphException::class);
+        $this->memory->accept('office');
+    }
+
+    public function test_full_text_search_survives_vacuum(): void
+    {
+        $this->memory->ingest('a', 'f://a', "First kestrel.\n", new MarkdownChunker, self::user());
+        $this->memory->ingest('b', 'f://b', "Second falcon.\n", new MarkdownChunker, self::user());
+        $this->memory->erase('a');
+        $this->pdo->exec('VACUUM');
+
+        $this->assertSame('b', $this->memory->search('falcon')[0]->chunk->sourceKey);
+        $this->assertSame([], $this->memory->search('kestrel'));
+        $this->pdo->exec("INSERT INTO graph_chunks_fts (graph_chunks_fts) VALUES ('integrity-check')");
     }
 
     public function test_keys_reject_whitespace_and_control_characters(): void

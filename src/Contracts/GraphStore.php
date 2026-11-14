@@ -18,17 +18,23 @@ use Prism\Graph\Scope;
 interface GraphStore
 {
     /**
-     * Idempotent per (scope, key). Returns the internal source id.
+     * Store a source and its verbatim chunks at $scope, in ONE transaction:
+     * the source row, every new chunk (content-addressed, so existing ones are
+     * left as they are), and retirement of chunks the source no longer
+     * contains. Every chunk must belong to this source
+     * (sourceId === $scope->qualify('source', $key)).
+     *
+     * A source's trust is fixed when it is first stored: storing the same key
+     * with a different trust is refused (erase, then ingest again).
      *
      * @param  array<string, mixed>  $metadata
+     * @param  list<Chunk>  $chunks
+     * @return array{source: string, stored: int, retired: int}
      */
-    public function putSource(Scope $scope, string $key, string $uri, string $sha256, array $metadata, Origin $origin, ?string $occurredAt = null): string;
+    public function storeSource(Scope $scope, string $key, string $uri, string $sha256, array $metadata, Origin $origin, ?string $occurredAt, array $chunks): array;
 
-    /** Content-addressed: an existing chunk id is left as is. @param list<Chunk> $chunks */
-    public function putChunks(array $chunks): int;
-
-    /** Retire every chunk of the source not in $keepIds; un-retire those in it. @param list<string> $keepIds */
-    public function retireExcept(string $sourceId, array $keepIds): int;
+    /** Retire every chunk of a source stored at exactly $scope. Returns how many are retired. */
+    public function retireSource(Scope $scope, string $key): int;
 
     /** Chunks visible from $reader, in the order asked. @param list<string> $ids @return list<Chunk> */
     public function getChunks(Scope $reader, array $ids): array;

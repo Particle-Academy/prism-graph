@@ -29,6 +29,7 @@ final class BaseSchema
         }
         $json = $driver === 'pgsql' ? 'JSONB' : 'TEXT';
         $scope = 'tenant_id VARCHAR(191) NOT NULL, owner_id VARCHAR(191), agent_id VARCHAR(191), thread_id VARCHAR(191)';
+        $serial = $driver === 'pgsql' ? 'BIGSERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY';
 
         $statements = [
             "CREATE TABLE {$t->sources} (id CHAR(64) PRIMARY KEY, source_key VARCHAR(191) NOT NULL, {$scope},
@@ -36,7 +37,9 @@ final class BaseSchema
                 trust VARCHAR(20) NOT NULL, writer VARCHAR(191) NOT NULL,
                 occurred_at CHAR(27), recorded_at CHAR(27) NOT NULL)",
             "CREATE INDEX {$t->sources}_scope ON {$t->sources} (tenant_id, owner_id, agent_id, thread_id)",
-            "CREATE TABLE {$t->chunks} (id CHAR(64) PRIMARY KEY, source_id CHAR(64) NOT NULL REFERENCES {$t->sources} (id),
+            // seq is the explicit integer key the SQLite full-text index joins on:
+            // an implicit rowid is not guaranteed stable across VACUUM.
+            "CREATE TABLE {$t->chunks} (seq {$serial}, id CHAR(64) NOT NULL UNIQUE, source_id CHAR(64) NOT NULL REFERENCES {$t->sources} (id),
                 text TEXT NOT NULL, byte_start INTEGER NOT NULL, byte_end INTEGER NOT NULL,
                 line_start INTEGER NOT NULL, line_end INTEGER NOT NULL, heading_path {$json} NOT NULL,
                 recipe VARCHAR(191) NOT NULL, retired_at CHAR(27))",
@@ -68,14 +71,14 @@ final class BaseSchema
         // External-content FTS5 kept in step by triggers: the text lives once,
         // in the chunks table, and the index can always be rebuilt from it.
         return [
-            "CREATE VIRTUAL TABLE {$fts} USING fts5(text, content='{$t->chunks}', content_rowid='rowid', tokenize='unicode61')",
+            "CREATE VIRTUAL TABLE {$fts} USING fts5(text, content='{$t->chunks}', content_rowid='seq', tokenize='unicode61')",
             "CREATE TRIGGER {$t->chunks}_ai AFTER INSERT ON {$t->chunks} BEGIN
-                INSERT INTO {$fts} (rowid, text) VALUES (new.rowid, new.text); END",
+                INSERT INTO {$fts} (rowid, text) VALUES (new.seq, new.text); END",
             "CREATE TRIGGER {$t->chunks}_ad AFTER DELETE ON {$t->chunks} BEGIN
-                INSERT INTO {$fts} ({$fts}, rowid, text) VALUES ('delete', old.rowid, old.text); END",
+                INSERT INTO {$fts} ({$fts}, rowid, text) VALUES ('delete', old.seq, old.text); END",
             "CREATE TRIGGER {$t->chunks}_au AFTER UPDATE OF text ON {$t->chunks} BEGIN
-                INSERT INTO {$fts} ({$fts}, rowid, text) VALUES ('delete', old.rowid, old.text);
-                INSERT INTO {$fts} (rowid, text) VALUES (new.rowid, new.text); END",
+                INSERT INTO {$fts} ({$fts}, rowid, text) VALUES ('delete', old.seq, old.text);
+                INSERT INTO {$fts} (rowid, text) VALUES (new.seq, new.text); END",
         ];
     }
 }

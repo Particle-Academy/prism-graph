@@ -56,10 +56,8 @@ final class ScopedGraph
         if ($sha256 !== null && ! hash_equals(strtolower($sha256), $actual)) {
             throw new GraphException("The provided sha256 for [{$key}] does not match its text.");
         }
-        $sourceId = $this->store->putSource($this->scope, $key, $uri, $actual, $metadata, $origin, $occurredAt);
-        $chunks = $chunker->chunk($sourceId, $text);
-        $stored = $this->store->putChunks($chunks);
-        $retired = $this->store->retireExcept($sourceId, array_map(static fn (Chunk $c) => $c->id, $chunks));
+        $chunks = $chunker->chunk($this->scope->qualify('source', $key), $text);
+        ['stored' => $stored, 'retired' => $retired] = $this->store->storeSource($this->scope, $key, $uri, $actual, $metadata, $origin, $occurredAt, $chunks);
 
         // Verbatim is stored first and never waits on embedding. Only chunks with
         // no vector yet are embedded, so a failed embedding heals on the next
@@ -90,7 +88,7 @@ final class ScopedGraph
     /** Take a source at this scope out of search; it stays readable by id. */
     public function retireSource(string $key): int
     {
-        return $this->store->retireExcept($this->scope->qualify('source', $key), []);
+        return $this->store->retireSource($this->scope, $key);
     }
 
     /**
