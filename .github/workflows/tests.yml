@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
+    services:
+      postgres:
+        # Disposable, CI-only database. The tests create and drop their own schemas.
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: graph_ci
+          POSTGRES_PASSWORD: graph-ci-only
+          POSTGRES_DB: graph_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U graph_ci -d graph_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_sqlite, pdo_pgsql, mbstring
+          coverage: none
+      - run: composer install --no-interaction --no-progress --prefer-dist
+      - run: composer audit
+      - name: Tests (SQLite and PostgreSQL with pgvector)
+        env:
+          PRISM_GRAPH_TEST_PG_DSN: pgsql:host=127.0.0.1;port=5432;dbname=graph_ci
+          PRISM_GRAPH_TEST_PG_USER: graph_ci
+          PRISM_GRAPH_TEST_PG_PASSWORD: graph-ci-only
+          PRISM_GRAPH_REQUIRE_PG: '1'
+        run: vendor/bin/phpunit --display-skipped
