@@ -72,6 +72,26 @@ final class LaravelTest extends TestCase
         $this->assertStringContainsString('heron', $hits[0]->chunk->text);
     }
 
+    public function test_the_repair_command_restores_search_after_an_altering_migration(): void
+    {
+        $this->migrate();
+        // An app migration that SQLite can only do by rebuilding the table drops our triggers.
+        Schema::table('kb_passages', function (Blueprint $table) {
+            $table->string('reviewed_by', 50)->nullable();
+        });
+        Schema::table('kb_passages', function (Blueprint $table) {
+            $table->text('reviewed_by')->nullable()->change();
+        });
+        $triggers = \Illuminate\Support\Facades\DB::select("SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'kb_passages'");
+        $this->assertSame([], $triggers, 'precondition: the table rebuild dropped the full-text triggers');
+        $memory = $this->app->make(Graph::class)->scope(Scope::tenant('acme')->owner('u1'));
+        $memory->ingest('doc', 'f://d', "The heron nests by the river.\n", new MarkdownChunker, new Origin(Trust::Document, 'importer'));
+
+        $this->artisan('prism-graph:repair-fulltext')->assertSuccessful();
+
+        $this->assertNotEmpty($memory->search('heron'));
+    }
+
     public function test_vector_migration_creates_the_pdo_tables_when_enabled(): void
     {
         $this->app['config']->set('prism-graph.vectors', 'pdo');

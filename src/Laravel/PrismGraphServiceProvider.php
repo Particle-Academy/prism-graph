@@ -51,6 +51,9 @@ final class PrismGraphServiceProvider extends ServiceProvider
     {
         $this->publishes([__DIR__.'/../../config/prism-graph.php' => config_path('prism-graph.php')], 'prism-graph-config');
         $this->publishes([__DIR__.'/../../database/migrations' => database_path('migrations')], 'prism-graph-migrations');
+        if ($this->app->runningInConsole()) {
+            $this->commands([RepairFullTextCommand::class]);
+        }
     }
 
     private function pdo(Application $app): \PDO

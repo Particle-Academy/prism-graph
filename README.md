@@ -136,6 +136,33 @@ $memory->accept('office');               // an app decision: a proposal becomes 
 Bind your own `Prism\Graph\Contracts\AcceptancePolicy` to change what is
 accepted. Times are UTC ISO 8601, and they come back in one fixed-width form.
 
+## Transactions
+
+Every write (ingest, assert, supersede, retract, accept, erase) is
+all-or-nothing, **including inside your own transaction**:
+- **Inside your transaction,** prism-graph runs in a savepoint. When it
+  refuses or fails, exactly its own work is rolled back, and your transaction
+  stays usable (on PostgreSQL too) and is yours to commit.
+- **A refused `supersede()`,** for example one that would replace an accepted
+  fact with tool-sourced evidence, is decided *before* anything is written, so
+  it writes nothing.
+
+## Full-text index after your migrations
+
+On SQLite, a migration that alters the chunks table in a way SQLite cannot do
+in place makes Laravel copy and rename the table. That drops the full-text
+index's triggers, so new text silently stops being searchable. After any such
+migration, run:
+
+```bash
+php artisan prism-graph:repair-fulltext
+```
+
+It restores the index and rebuilds it from the stored chunks, and is safe to
+run at any time. A good place for it is right after `php artisan migrate` in
+your deploy. Without Laravel, use the statements from
+`BaseSchema::repairFullText($driver)`.
+
 ## Erasure
 
 ```php

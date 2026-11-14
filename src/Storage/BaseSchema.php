@@ -57,6 +57,42 @@ final class BaseSchema
         return [...$statements, ...self::fullText($driver, $t)];
     }
 
+    /**
+     * Restore the full-text index after an app migration broke it, then
+     * rebuild its contents from the chunks table. Safe to run at any time.
+     *
+     * Why this exists: on SQLite, altering a table in ways SQLite cannot do in
+     * place (Laravel then copies the table and renames it) DROPS the table's
+     * triggers. Our full-text triggers on the chunks table vanish, new chunks
+     * stop being indexed, and search silently stops finding them: a derived
+     * index hiding text, which this package must never do. Run this after any
+     * migration that alters the chunks table (or `php artisan
+     * prism-graph:repair-fulltext`). PostgreSQL's generated column survives
+     * such migrations, so there it only re-creates the index if missing.
+     *
+     * @return list<string>
+     */
+    public static function repairFullText(string $driver, TableMap $t = new TableMap): array
+    {
+        if ($driver === 'pgsql') {
+            return ["CREATE INDEX IF NOT EXISTS {$t->chunks}_search ON {$t->chunks} USING GIN (search)"];
+        }
+        $fts = $t->fts();
+        [$virtual, $insert, $delete, $update] = self::fullText('sqlite', $t);
+
+        return [
+            str_replace('CREATE VIRTUAL TABLE', 'CREATE VIRTUAL TABLE IF NOT EXISTS', $virtual),
+            "DROP TRIGGER IF EXISTS {$t->chunks}_ai",
+            "DROP TRIGGER IF EXISTS {$t->chunks}_ad",
+            "DROP TRIGGER IF EXISTS {$t->chunks}_au",
+            $insert,
+            $delete,
+            $update,
+            // Re-read every chunk, including any inserted while the triggers were gone.
+            "INSERT INTO {$fts} ({$fts}) VALUES ('rebuild')",
+        ];
+    }
+
     /** @return list<string> */
     public static function fullText(string $driver, TableMap $t = new TableMap): array
     {

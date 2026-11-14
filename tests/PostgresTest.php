@@ -110,6 +110,34 @@ final class PostgresTest extends TestCase
         $this->assertSame([], $memory->facts('alice', unaccepted: true));
     }
 
+    // PostgreSQL aborts the whole transaction after an error unless a savepoint
+    // is rolled back: the nested path must leave the caller's transaction usable.
+    public function test_a_failed_write_inside_the_callers_transaction_leaves_it_usable_on_postgres(): void
+    {
+        $memory = $this->graph()->scope(self::acme()->owner('alice'));
+        $memory->ingest('a', 'f://a', "Shop closes Mondays.\n", new MarkdownChunker, self::user());
+        $memory->ingest('t', 'f://t', "Shop closes Sundays now, says a page.\n", new MarkdownChunker, self::tool());
+        $memory->assert(new Fact('f1', 'shop', 'closes', 'monday', [$memory->search('mondays')[0]->chunk->id], '2026-01-01T00:00:00Z'));
+        $memory->assert(new Fact('taken', 'shop', 'opens', 'nine', [$memory->search('mondays')[0]->chunk->id], '2026-01-01T00:00:00Z'));
+
+        $this->pdo->beginTransaction();
+        foreach ([
+            new Fact('f2', 'shop', 'closes', 'sunday', [$memory->search('sundays')[0]->chunk->id], '2026-06-01T00:00:00Z'), // refused: tool evidence
+            new Fact('taken', 'shop', 'closes', 'sunday', [$memory->search('mondays')[0]->chunk->id], '2026-06-01T00:00:00Z'), // fails after the close
+        ] as $replacement) {
+            try {
+                $memory->supersede('f1', $replacement);
+                $this->fail('the supersede was not refused');
+            } catch (\Throwable) {
+            }
+        }
+        $memory->ingest('b', 'f://b', "Still usable.\n", new MarkdownChunker, self::user()); // would fail in an aborted transaction
+        $this->pdo->commit();
+
+        $this->assertSame('monday', $memory->facts('shop')[0]->object);
+        $this->assertNotEmpty($memory->search('usable'));
+    }
+
     public function test_pgvector_ranks_by_cosine_and_refuses_a_different_embedder(): void
     {
         $store = new PgVectorStore($this->pdo);
