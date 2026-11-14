@@ -1,32 +1,75 @@
 # prism-graph
 
-Knowledge-graph plumbing for PHP apps: chunk documents verbatim, store them in
-**your** tables, search them (text, plus optional vectors), and record facts
-that must cite the passages they came from.
+Long-term memory for AI agents, built for agents on
+[prism-harness](https://github.com/Particle-Academy/prism-harness) and the
+Agent Client Protocol, and usable by any PHP app.
 
-It provides the plumbing and the tools. It does not decide your data's shape:
-the tables are yours, created by migrations you publish and own.
+It keeps what an agent has heard, read and concluded, across chats, for months:
+- verbatim episodes, kept as evidence;
+- facts that must cite that evidence;
+- every read and write scoped to a tenant, an owner, an agent and a thread.
 
-- **Storage:** SQLite 3.24+ or PostgreSQL, over PDO.
-- **Vectors (optional):** none, exact search in the same database, sqlite-vec,
-  pgvector, or any vector database through the `VectorStore` contract.
-- **Embeddings:** through [Prism](https://github.com/Particle-Academy/prism)
-  (`Prism::embeddings()`), or any `Embedder` you write.
+Memory is a security boundary, so the design starts there.
 
-## Guarantees
+> **prism-graph and prism-memory are different jobs.** `prism-memory` is
+> short-term memory: what survives compaction, scoped to one chat.
+> `prism-graph` is long-term memory across chats.
 
-- **Verbatim is the floor.** A chunk is an exact byte span of its source.
-  Derived data (vectors, facts) ranks results. It never replaces or hides text.
-- **Content-addressed chunks.** A chunk id is the sha256 of its recipe, source,
-  byte span and text. The same input gives the same id, so re-ingesting is a no-op.
-  A forged id is refused.
-- **Pinned embedders.** Each vector index is pinned to one provider, model,
-  dimension and chunk recipe. Vectors from a different embedder are refused, never mixed.
-- **Facts cite evidence.** A fact needs at least one stored chunk behind it.
-  Superseding a fact closes the old one and keeps it as history, in one
-  transaction.
-- **Reads never write.** Search, get and facts only run SELECTs.
-- **Nothing creates tables at runtime.**
+## What it guarantees
+
+- **Scope is enforced in SQL, on every query.** There is no unscoped read, so
+  one owner's memory is never fetched for another, and one tenant's never
+  for another.
+- **App keys are namespaced per scope,** so two tenants using `doc-1` get two
+  rows.
+- **Verbatim is the floor.** Search returns stored text, not a paraphrase.
+  Derived data (vectors, facts) ranks results and never hides them.
+- **Every source records where it came from:** a trust class (`user`,
+  `document`, `agent`, `tool`, `subagent`, `consolidator`, `system`) and the
+  writer. The caller binds both, never a model's tool arguments.
+- **Facts cite evidence, and a policy decides their status:**
+  - **accepted** when every cited chunk came from a user or a document;
+  - a **belief** when the evidence is only the agent's own notes;
+  - a **proposal** otherwise, which waits for the app.
+
+  One trusted chunk cited beside an injected tool result does not launder the
+  injection into a fact.
+- **An accepted fact can only be superseded by a fact the policy also
+  accepts.** A tool result that says "the user's email is now X" cannot
+  overwrite what the user said.
+- **Facts are bi-temporal.** *Valid* time records when something held in the
+  world; *recorded* time records when memory held it. You can ask "what was
+  true in March" and "what did the agent believe in March", and get
+  different answers.
+- **Erasure cascades:** chunks, vectors, full-text index entries, evidence
+  links, and every fact left with no evidence. It returns counts you can
+  keep as proof.
+- **Recalled text is fenced as data.** Agent tools mark invisible characters
+  visibly, and wake-up text sits inside a fence that stored content cannot
+  close.
+- **Reads never write, and nothing creates tables at runtime.**
+
+## Scopes
+
+```php
+use Prism\Graph\Scope;
+
+$tenant = Scope::tenant('acme');                              // shared by everyone in acme
+$owner  = $tenant->owner('user-7');                           // this person's memory
+$agent  = $owner->agent('support');                           // what this agent knows about them
+$thread = $agent->thread('chat-123');                         // this conversation
+```
+
+A reader sees its own level and every level above it, never sideways. A
+thread sees the thread, the agent's memory of the owner, the owner's memory
+and the tenant's shared memory. It does not see another thread, another agent
+or another owner.
+
+An agent scope requires an owner, so no row can be visible across owners
+except a tenant-wide one that you wrote on purpose.
+
+Writes land at exactly the scope you opened. To share something tenant-wide,
+open the tenant scope and write there.
 
 ## Install (Laravel)
 
@@ -37,156 +80,150 @@ php artisan vendor:publish --tag=prism-graph-migrations
 php artisan migrate
 ```
 
-The published migrations create the core columns the graph reads and writes.
-From there they are your migrations:
+The published migrations are yours to own:
+- add your own columns, or rename tables and point `config/prism-graph.php` →
+  `tables` at them;
+- keep the scope columns, because every read filters on them.
 
-- Add columns such as tenant, owner, review state or soft deletes in your own
-  migrations.
-- Rename any table, then point `config/prism-graph.php` → `tables` at it.
-
-The graph only reads and writes the columns it owns. **It does not filter on
-yours**, so a `tenant_id` column you add does not scope search, get, facts or
-the agent tools.
-
-> **One graph per trust domain.** In 0.1.0 a `Graph` reads everything in its
-> tables. To keep tenants apart, give each its own tables (a `TableMap` per
-> tenant) or its own connection. Never let one tenant's agent hold another
-> tenant's `Graph`.
-
-Embedding with Prism needs `particle-academy/prism` installed and a provider key
-in your app's Prism config.
+Full-text search runs on FTS5 on SQLite, which folds case and accents. On
+PostgreSQL it runs on a generated tsvector with the `simple` configuration,
+which folds case only.
 
 ```php
 use Prism\Graph\Chunking\MarkdownChunker;
 use Prism\Graph\Graph;
+use Prism\Graph\Origin;
+use Prism\Graph\Scope;
+use Prism\Graph\Trust;
 
-$graph = app(Graph::class);
+$memory = app(Graph::class)->scope(Scope::tenant('acme')->owner('user-7')->agent('support'));
 
-$graph->ingest('handbook', 'file://handbook.md', $markdown, new MarkdownChunker);
+$memory->ingest('handbook', 'file://handbook.md', $markdown, new MarkdownChunker,
+    new Origin(Trust::Document, 'importer'));
 
-foreach ($graph->search('refund policy') as $hit) {
-    echo $hit->chunk->text;            // exact text
-    echo $hit->chunk->sourceId;        // where it came from
-    echo $hit->chunk->lineStart;       // and where in it
+foreach ($memory->search('refund policy') as $hit) {
+    $hit->chunk->text;        // the exact stored text
+    $hit->chunk->sourceKey;   // 'handbook'
+    $hit->chunk->trust;       // Trust::Document
+    $hit->method;             // 'text', a vector method, or 'hybrid'
 }
 ```
 
-### Vectors
-
-Vectors are off by default: search is text-only and no vector tables are
-created. To enable them, set `PRISM_GRAPH_VECTORS` **before** running the
-vector migration:
-
-| value | what it uses |
-|---|---|
-| `pdo` | Exact cosine search in PHP. Any SQLite or PostgreSQL database, no extension needed. Fine for small and medium indexes. |
-| `sqlite-vec` | [sqlite-vec](https://github.com/asg017/sqlite-vec), with distance computed in C. It uses the same tables as `pdo`, so switching needs no migration. Your app loads the extension on the connection (PHP 8.4+: `Pdo\Sqlite::loadExtension`). |
-| `pgvector` | PostgreSQL with [pgvector](https://github.com/pgvector/pgvector). Add a sized column and an HNSW index in your own migration once the index is large. |
-| a container binding | Your own `Prism\Graph\Contracts\VectorStore`, for Qdrant, Pinecone, Weaviate and the like. |
-
-The embedder is set by `PRISM_GRAPH_EMBED_PROVIDER`, `_MODEL` and `_DIMENSIONS`.
-To change models, use a new index name: an existing index refuses a different
-embedder.
-
-Search with vectors on returns the vector hits first. It then fills from text
-search, so a chunk that has no vector yet can still be found.
-
-### A living corpus
-
-Re-ingest a source whenever it changes:
-- **Unchanged chunks** keep their ids, and their embeddings are not paid for again.
-- **New chunks** are stored and embedded.
-- **Text the source no longer contains** is **retired**: it leaves search at once.
-
-```php
-$report = $graph->ingest('handbook', 'file://handbook.md', $newMarkdown, new MarkdownChunker);
-$report->retired;              // chunks the source no longer contains
-
-$graph->retireSource('handbook');   // take a whole source out of search
-```
-
-A retired chunk is still readable by id, with `retiredAt` set, so a fact that
-cites it keeps its evidence. Restoring the text brings the chunk back.
-
-Retiring is not deleting: the text is still stored. To erase data, for
-example on a deletion request, delete the rows yourself in a migration or
-job: the facts that cite the source, their evidence rows, its vectors, its
-chunks, then the source.
-
-## Without Laravel
-
-```php
-use Prism\Graph\Graph;
-use Prism\Graph\Storage\BaseSchema;
-use Prism\Graph\Storage\PdoGraphStore;
-
-$pdo = new PDO('sqlite:graph.db');
-// Run these once, from your own migration tooling:
-foreach (BaseSchema::statements('sqlite') as $sql) { $pdo->exec($sql); }
-
-$graph = new Graph(new PdoGraphStore($pdo), $pdo);
-```
-
-A `TableMap` maps each role (`sources`, `chunks`, `nodes`, `edges`, `facts`,
-`evidence`) onto your own table names.
+Search is hybrid. Full-text ranking (BM25, or `ts_rank` on PostgreSQL) and
+vector similarity, when configured, are fused by reciprocal rank. A chunk
+whose embedding failed is still found by text.
 
 ## Facts
 
 ```php
 use Prism\Graph\Fact;
 
-$chunk = $graph->search('closed mondays')[0]->chunk;
-$graph->assert(new Fact('f1', 'shop', 'closes_on', 'monday', [$chunk->id], '2026-01-01T00:00:00Z'));
+$said = $memory->search('my email is')[0]->chunk;       // a user turn
+$fact = $memory->assert(new Fact('email', 'user-7', 'email', 'a@example.com', [$said->id], '2026-01-01T00:00:00Z'));
+$fact->status;   // FactStatus::Accepted
 
-// Later, the source changes:
-$graph->supersede('f1', new Fact('f2', 'shop', 'closes_on', 'sunday', [$newChunk->id], '2026-06-01T00:00:00Z'));
+$memory->facts('user-7');                                   // accepted, in force now
+$memory->facts('user-7', at: '2026-03-01T00:00:00Z');       // what held then
+$memory->facts('user-7', knownAt: '2026-03-01T00:00:00Z');  // what memory held then
+$memory->facts('user-7', unaccepted: true);                 // also proposals and beliefs, labelled
+$memory->timeline('user-7');                                // every version, oldest first
 
-$graph->facts('shop');                          // what holds now
-$graph->facts('shop', '2026-03-01T00:00:00Z');  // what held then
+$memory->supersede('email', $newFact);   // the world changed
+$memory->retract('email');               // we were wrong
+$memory->accept('office');               // an app decision: a proposal becomes accepted
 ```
 
-Times are UTC ISO 8601 and come back in one fixed-width form (`2026-01-01T00:00:00.000000Z`), so they compare correctly whatever precision you passed. Impossible dates and windows that end before they start are refused.
+Bind your own `Prism\Graph\Contracts\AcceptancePolicy` to change what is
+accepted. Times are UTC ISO 8601, and they come back in one fixed-width form.
+
+## Erasure
+
+```php
+$report = $memory->erase('handbook');
+// sourceFound, chunks, vectors, evidenceLinks, factsErased, factsKept
+```
+
+`retireSource()` is the non-destructive option: the source leaves search but
+stays readable by id. Re-ingesting a changed source retires only the text it
+no longer contains.
 
 ## Agent tools
 
-`GraphTools` exposes three **read-only** tools, `graph_search`, `graph_get` and
-`graph_facts`, as Prism `Tool` objects:
-
 ```php
-use Prism\Graph\Tools\GraphTools;
+use Prism\Graph\Tools\MemoryTools;
 
-$tools = (new GraphTools(app(Graph::class)))->prismTools();
+$tools = (new MemoryTools($memory, writer: 'agent:support'))->prismTools();
 ```
 
-- **Results:** JSON, with every passage carrying its chunk id so an answer can
-  be checked against the source.
-- **Limits:** clamped, whatever the model asks for. Queries are capped at 4 KB.
-- **Ids:** malformed ids are refused before any query runs.
-- **Errors:** a tool never throws at the model. Validation messages come back
-  as `{"error": ...}`. Database errors become a fixed message, so table names
-  and SQL never reach the model's context.
-- **Writes:** no tool writes. If an agent should assert facts, build that tool
-  in your app, with your own review step.
-- **Prompt injection:** passages are stored text. Characters a reader cannot
-  see are shown as `<U+XXXX>`: Unicode tag characters, bidi controls and
-  zero-width marks. Every tool description tells the model that passages are
-  data. Still treat them as data in your own prompts.
+| tool | what it does |
+|---|---|
+| `memory_search` | Searches memory and returns verbatim passages, each with chunk id, source, trust and line span. |
+| `memory_get` | Reads passages by chunk id, within the scope. |
+| `memory_facts` | Returns accepted facts with their evidence. `include_beliefs` adds proposals and beliefs, labelled. |
+| `memory_timeline` | Returns every version of the facts about a subject. |
+| `memory_note` | Saves the agent's own note, with trust `agent`. A note never becomes an accepted fact by being written. |
 
-## Wake context
+How the tools behave:
+- The scope and the writer are fixed when the tools are built, from your
+  session. A model can only search what that scope can see.
+- No tool asserts, accepts, supersedes or erases. Those are app decisions.
+- Tool names may not contain the verbs reserved for the human: confirm,
+  approve, accept, reject, deny.
+- A tool never throws at the model. Database errors become a fixed message.
 
-`Wake` assembles a context block from layers under a token budget, for example
-the facts about a subject plus the top search hits. Each layer has its own
-budget, and the report lists what was left out rather than silently truncating.
+## Wake-up context
 
-## Chunking
+```php
+use Prism\Graph\Wake\{Wake, FactsLayer, SearchLayer};
 
-- `WindowChunker` splits into byte windows with overlap. It prefers paragraph,
-  then sentence, then line breaks, and never splits a UTF-8 character.
-- `MarkdownChunker` does the same within heading sections and records the
-  heading path.
+$report = (new Wake($memory))
+    ->layer(new FactsLayer('known', ['user-7']), 400)
+    ->layer(new SearchLayer('relevant', $openingMessage), 800)
+    ->assemble(timeBudgetMs: 150);
 
-A chunker's settings are part of its recipe, so changing them produces new
-chunk ids rather than silently re-labelling old ones.
+$systemPrompt .= $report->fenced();   // data inside a hash-tagged fence
+$report->omitted;                     // what did not fit, and why
+```
+
+## Vectors (optional)
+
+Set `PRISM_GRAPH_VECTORS` before running the vector migration:
+
+| value | uses |
+|---|---|
+| `pdo` | Exact cosine search, run in PHP, on SQLite or PostgreSQL. |
+| `sqlite-vec` | [sqlite-vec](https://github.com/asg017/sqlite-vec), on the same tables as `pdo`. The app loads the extension (PHP 8.4+). |
+| `pgvector` | PostgreSQL with [pgvector](https://github.com/pgvector/pgvector). |
+| a container binding | Your own `Prism\Graph\Contracts\VectorStore`. |
+
+Vector indexes:
+- **Partitioned per tenant,** so another tenant's vectors can neither appear
+  in your results nor crowd them out.
+- **Pinned to one embedder,** so vectors from a different model are refused.
+
+The embedder is set by `PRISM_GRAPH_EMBED_PROVIDER`, `_MODEL` and
+`_DIMENSIONS`.
+
+## Without Laravel
+
+```php
+$pdo = new PDO('sqlite:memory.db');
+foreach (\Prism\Graph\Storage\BaseSchema::statements('sqlite') as $sql) { $pdo->exec($sql); }  // from your own migration tooling
+
+$graph = new \Prism\Graph\Graph(new \Prism\Graph\Storage\PdoGraphStore($pdo));
+```
+
+## Upgrading from 0.1
+
+0.2 is a breaking release:
+- **Every read and write goes through `$graph->scope(...)`.**
+- **`ingest()` takes an `Origin`.**
+- **The tables changed.** There are new scope, trust and recorded-time
+  columns; nodes and edges are removed; full-text search is added.
+- **`GraphTools` is now `MemoryTools`.**
+
+0.1 data has no scope or trust, so there is no automatic migration: re-ingest
+your sources into a 0.2 schema.
 
 ## Testing
 
@@ -195,10 +232,10 @@ composer install
 vendor/bin/phpunit
 ```
 
-- **PostgreSQL tests:** set `PRISM_GRAPH_TEST_PG_DSN`, `_USER` and `_PASSWORD`.
-  Each test creates and drops its own `graph_test_*` schema.
-- **sqlite-vec tests:** need PHP 8.4 and `PRISM_GRAPH_SQLITE_VEC` set to the
-  `vec0` binary.
+- **PostgreSQL tests:** set `PRISM_GRAPH_TEST_PG_DSN`, `_USER` and `_PASSWORD`
+  to a disposable database.
+- **sqlite-vec tests:** need PHP 8.4 and `PRISM_GRAPH_SQLITE_VEC`.
+- **Adversarial scope tests** are in `tests/ScopeTest.php`.
 
 ## License
 

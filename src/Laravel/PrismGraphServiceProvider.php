@@ -7,7 +7,9 @@ namespace Prism\Graph\Laravel;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
+use Prism\Graph\Contracts\AcceptancePolicy;
 use Prism\Graph\Contracts\GraphStore;
+use Prism\Graph\DefaultAcceptancePolicy;
 use Prism\Graph\Contracts\VectorStore;
 use Prism\Graph\Embedding\PrismEmbedder;
 use Prism\Graph\Graph;
@@ -32,15 +34,15 @@ final class PrismGraphServiceProvider extends ServiceProvider
 
         $this->app->singleton(TableMap::class, fn (Application $app) => TableMap::from($app['config']->get('prism-graph.tables', [])));
         $this->app->singleton(GraphStore::class, fn (Application $app) => new PdoGraphStore($this->pdo($app), $app->make(TableMap::class)));
+        $this->app->singletonIf(AcceptancePolicy::class, DefaultAcceptancePolicy::class);
         $this->app->singleton(Graph::class, function (Application $app): Graph {
             $vectors = $this->vectors($app);
 
             return new Graph(
                 $app->make(GraphStore::class),
-                $this->pdo($app),
-                $app->make(TableMap::class),
                 $vectors,
                 $vectors === null ? null : new PrismEmbedder($this->spec($app)),
+                $app->make(AcceptancePolicy::class),
             );
         });
     }

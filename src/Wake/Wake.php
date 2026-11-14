@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Prism\Graph\Wake;
 
 use InvalidArgumentException;
-use Prism\Graph\Graph;
+use Prism\Graph\ScopedGraph;
 
 /**
  * Assembles layers in the order given, each under its own token budget, and
@@ -18,7 +18,7 @@ final class Wake
     private array $layers = [];
 
     /** @param callable(string): int $tokens  token estimator; default is 4 bytes per token */
-    public function __construct(private readonly Graph $graph, private $tokens = null)
+    public function __construct(private readonly ScopedGraph $graph, private $tokens = null)
     {
         $this->tokens ??= static fn (string $text): int => (int) ceil(strlen($text) / 4);
     }

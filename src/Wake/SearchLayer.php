@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Prism\Graph\Wake;
 
-use Prism\Graph\Graph;
+use Prism\Graph\ScopedGraph;
 use Prism\Graph\Hit;
 
 /** Built-in layer: verbatim chunks matching a query. */
@@ -17,7 +17,7 @@ final readonly class SearchLayer implements WakeLayer
         return $this->name;
     }
 
-    public function items(Graph $graph): array
+    public function items(ScopedGraph $graph): array
     {
         return array_map(
             static fn (Hit $hit) => new WakeItem($hit->chunk->text, 'chunk:'.$hit->chunk->id),

@@ -42,6 +42,15 @@ interface VectorStore
      */
     public function missing(IndexSpec $spec, array $chunkIds): array;
 
+    /**
+     * Remove every vector for these chunk ids, in every index. Erasure calls
+     * this: a deleted chunk must not live on as an embedding.
+     *
+     * @param  list<string>  $chunkIds
+     * @return int how many vectors were removed
+     */
+    public function forget(array $chunkIds): int;
+
     /** Name of the search method, reported with results (e.g. "brute-force", "sqlite-vec", "pgvector"). */
     public function method(): string;
 }

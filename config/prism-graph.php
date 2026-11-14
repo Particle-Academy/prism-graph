@@ -9,8 +9,6 @@ return [
     'tables' => [
         'sources' => 'graph_sources',
         'chunks' => 'graph_chunks',
-        'nodes' => 'graph_nodes',
-        'edges' => 'graph_edges',
         'facts' => 'graph_facts',
         'evidence' => 'graph_fact_evidence',
     ],
