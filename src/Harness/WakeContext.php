@@ -15,21 +15,26 @@ use Prism\Harness\Sessions\Session;
 
 /**
  * Wakes a harness agent up with what memory already holds, at every model
- * call: what this thread, this agent's memory of the person, the person's
- * own memory and the tenant's shared memory say about the new message.
+ * call. It reads from the session's thread scope, which sees this agent's
+ * memory of the person, the person's own memory and the tenant's shared
+ * memory above it, and never another person's.
  *
  * Output is the Wake report FENCED as data (hash-tagged, hidden characters
- * shown), because it lands in the system prompt, which outranks the chat.
- * Returns '' when nothing is recalled, so an empty memory adds nothing.
+ * shown, each item labelled with its trust class), because it lands in the
+ * system prompt, which outranks the chat. Returns '' when nothing is
+ * recalled, so an empty memory adds nothing.
  *
- * Pass $layers to choose what is recalled; the default is a search on the
- * new user message under an 800-token budget.
+ * LATENCY: this runs before every model call, inside the session lock. The
+ * default recall is TEXT-ONLY (the database alone, no embedding-provider
+ * call), because Wake checks its time budget between layers and cannot stop
+ * a provider call already in flight. Pass $layers to recall with vectors,
+ * knowing that call is then on every turn's critical path.
  */
 final readonly class WakeContext implements ContextProvider
 {
     /**
      * @param  Closure(Session): Scope  $scope
-     * @param  (Closure(ScopedGraph, Session, string): Wake)|null  $layers
+     * @param  (Closure(ScopedGraph, Session, string): ?Wake)|null  $layers
      */
     public function __construct(
         private Graph $graph,
@@ -59,6 +64,6 @@ final readonly class WakeContext implements ContextProvider
             return null;
         }
 
-        return (new Wake($memory))->layer(new SearchLayer('recalled', $query, 8), 800);
+        return (new Wake($memory))->layer(new SearchLayer('recalled', $query, 8, vectors: false), 800);
     }
 }

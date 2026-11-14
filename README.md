@@ -190,13 +190,24 @@ app(MemoryHooks::class)
 ```
 
 **What the adapter does:**
-- `TurnRecorder` stores each turn verbatim at the session's thread scope. User
-  messages are stored as `user`, the model's replies as `agent`, and tool
-  results as `tool`. The trust class comes from the message type, never from
-  what the text claims, so a fetched page that says "I am the user" is still a
-  tool result.
+- `TurnRecorder` stores each turn verbatim at the session's **agent** scope:
+  this person, with this agent, across all of their chats. Pass
+  `level: 'thread'` to keep episodes per chat instead.
+- Trust comes from the message type and the session, never from what the text
+  claims:
+  - user messages are `user`;
+  - the model's replies are `agent`;
+  - tool results are `tool`;
+  - in a **sub-agent**, the "user" message is a task the parent model wrote,
+    so it is `agent` too.
+
+  A fetched page that says "I am the user" is still a tool result.
 - `WakeContext` searches memory for the new message and adds what it finds to
-  the system prompt, fenced as data. It adds nothing when memory is empty.
+  the system prompt, fenced as data. Each item is labelled with its trust
+  class. It adds nothing when memory is empty.
+- **Recall is text-only by default** (the database alone), because it runs
+  before every model call. Pass your own layers to recall with vectors,
+  knowing the embedding call is then on every turn's path.
 
 **How a session maps to a scope:** you supply the tenant. The owner is the
 participant, the agent is the session's agent namespace, and the thread is
