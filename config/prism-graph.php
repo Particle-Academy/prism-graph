@@ -15,7 +15,7 @@ return [
         'evidence' => 'graph_fact_evidence',
     ],
 
-    // Vector search is OPTIONAL. null: text search and traversal only.
+    // Vector search is OPTIONAL. null: text search only.
     // 'pdo': exact search stored in the same database (any SQLite/PostgreSQL).
     // 'sqlite-vec': SQLite with sqlite-vec loaded on the connection (same tables as 'pdo').
     // 'pgvector': PostgreSQL with the pgvector extension.
