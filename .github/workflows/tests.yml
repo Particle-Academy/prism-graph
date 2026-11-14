@@ -37,22 +37,6 @@ jobs:
           php-version: ${{ matrix.php }}
           extensions: pdo, pdo_sqlite, pdo_pgsql, mbstring
           coverage: none
-      # TEMPORARY (G-271): Packagist stopped regenerating Composer metadata on
-      # 2026-11-13 (composer/packagist#1956), so prism-harness v0.24.0 cannot be
-      # installed from it. While that lasts, this reads the harness's tags from
-      # GitHub. It CHECKS Packagist on every run: once Packagist serves the
-      # version, the fallback is no longer applied and every run carries a
-      # warning saying this step can be deleted.
-      - name: Packagist check (GitHub fallback for prism-harness while Packagist is stale)
-        env:
-          NEED: v0.24.0
-        run: |
-          if curl -fsS "https://repo.packagist.org/p2/particle-academy/prism-harness.json" | grep -q "\"version\":\"${NEED}\""; then
-            echo "::warning title=Packagist recovered::Packagist now serves particle-academy/prism-harness ${NEED}. Delete this fallback step (G-271)."
-          else
-            echo "::notice title=Packagist still stale::Packagist does not serve prism-harness ${NEED} yet (G-271); installing it from GitHub."
-            composer config repositories.prism-harness vcs https://github.com/Particle-Academy/prism-harness
-          fi
       - run: composer install --no-interaction --no-progress --prefer-dist
       - run: composer audit
       - name: German locale (proves pgvector literals ignore LC_NUMERIC)
