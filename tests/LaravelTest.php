@@ -10,6 +10,9 @@ use Orchestra\Testbench\TestCase;
 use Prism\Graph\Chunking\MarkdownChunker;
 use Prism\Graph\Graph;
 use Prism\Graph\Laravel\PrismGraphServiceProvider;
+use Prism\Graph\Origin;
+use Prism\Graph\Scope;
+use Prism\Graph\Trust;
 
 final class LaravelTest extends TestCase
 {
@@ -53,17 +56,18 @@ final class LaravelTest extends TestCase
     {
         $this->migrate();
         Schema::table('graph_sources', function (Blueprint $table) {
-            $table->string('tenant_id')->nullable();
+            $table->string('department')->nullable();
         });
         Schema::table('kb_passages', function (Blueprint $table) {
             $table->boolean('reviewed')->default(false);
         });
 
-        $graph = $this->app->make(Graph::class);
-        $report = $graph->ingest('doc-1', 'file://doc-1.md', "# Title\n\nThe heron nests by the river.\n", new MarkdownChunker);
+        // The renamed chunks table must also carry its full-text index, or search finds nothing.
+        $memory = $this->app->make(Graph::class)->scope(Scope::tenant('acme')->owner('u1'));
+        $report = $memory->ingest('doc-1', 'file://doc-1.md', "# Title\n\nThe heron nests by the river.\n", new MarkdownChunker, new Origin(Trust::Document, 'importer'));
         $this->assertGreaterThan(0, $report->stored);
 
-        $hits = $graph->search('heron river');
+        $hits = $memory->search('heron river');
         $this->assertNotEmpty($hits);
         $this->assertStringContainsString('heron', $hits[0]->chunk->text);
     }

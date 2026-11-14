@@ -139,6 +139,11 @@ class PdoVectorStore implements VectorStore
         return Missing::filter($this->pdo, $this->vectors, $spec->name, $chunkIds);
     }
 
+    public function forget(array $chunkIds): int
+    {
+        return Missing::forget($this->pdo, $this->vectors, $chunkIds);
+    }
+
     protected function fingerprintOf(string $name): ?string
     {
         $statement = $this->pdo->prepare("SELECT fingerprint FROM {$this->indexes} WHERE name = ?");

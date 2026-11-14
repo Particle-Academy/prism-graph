@@ -7,9 +7,23 @@ namespace Prism\Graph\Storage;
 use InvalidArgumentException;
 use PDO;
 
-/** @internal Shared "which ids have no vector" query for the PDO-backed stores. */
+/** @internal Shared "which ids have no vector" and "forget these" queries for the PDO-backed stores. */
 final class Missing
 {
+    /** @param list<string> $chunkIds */
+    public static function forget(PDO $pdo, string $table, array $chunkIds): int
+    {
+        $removed = 0;
+        foreach (array_chunk(array_values(array_unique(array_map('strval', $chunkIds))), self::MAX_IDS) as $batch) {
+            $marks = implode(',', array_fill(0, count($batch), '?'));
+            $statement = $pdo->prepare("DELETE FROM {$table} WHERE chunk_id IN ({$marks})");
+            $statement->execute($batch);
+            $removed += $statement->rowCount();
+        }
+
+        return $removed;
+    }
+
     public const MAX_IDS = 500;
 
     /** @param list<string> $chunkIds @return list<string> */

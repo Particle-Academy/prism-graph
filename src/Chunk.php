@@ -28,6 +28,10 @@ final readonly class Chunk
         // Set when the chunk's source no longer contains it. A retired chunk is
         // left out of search, but stays readable by id so citations still resolve.
         public ?string $retiredAt = null,
+        // Filled on read: the app's own key for the source (sourceId is the
+        // scope-qualified internal id), and the trust class it was written with.
+        public ?string $sourceKey = null,
+        public ?Trust $trust = null,
     ) {}
 
     /**

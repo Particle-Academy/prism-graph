@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Prism\Graph\Wake;
 
-use Prism\Graph\Graph;
+use Prism\Graph\ScopedGraph;
 
 /**
  * One app-defined layer of a wake-up context (e.g. identity, recent facts,
@@ -16,5 +16,5 @@ interface WakeLayer
     public function name(): string;
 
     /** @return list<WakeItem> */
-    public function items(Graph $graph): array;
+    public function items(ScopedGraph $graph): array;
 }

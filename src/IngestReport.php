@@ -7,7 +7,7 @@ namespace Prism\Graph;
 final readonly class IngestReport
 {
     public function __construct(
-        public string $sourceId,
+        public string $source,
         public string $sha256,
         public string $recipe,
         public int $chunks,
