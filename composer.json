@@ -1,0 +1,28 @@
+{
+    "name": "particle-academy/prism-graph",
+    "description": "Configurable knowledge graphs with embeddings for Prism: verbatim chunks, content-addressed ids, pinned embedders and validity-window facts.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "ext-pdo": "*",
+        "ext-pdo_sqlite": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "suggest": {
+        "particle-academy/prism": "Embeddings via Prism::embeddings()"
+    },
+    "autoload": {
+        "psr-4": {
+            "Prism\\Graph\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Prism\\Graph\\Tests\\": "tests/"
+        }
+    },
+    "minimum-stability": "stable"
+}
