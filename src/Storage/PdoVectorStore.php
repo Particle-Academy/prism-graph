@@ -9,6 +9,7 @@ use PDO;
 use Prism\Graph\Contracts\VectorStore;
 use Prism\Graph\Exceptions\GraphException;
 use Prism\Graph\IndexSpec;
+use Prism\Graph\Support\Atomic;
 use Prism\Graph\Support\Vectors;
 
 /**
@@ -66,11 +67,8 @@ class PdoVectorStore implements VectorStore
     public function upsert(IndexSpec $spec, array $vectors): void
     {
         $this->assertPinned($spec, $this->fingerprintOf($spec->name));
-        $owns = ! $this->pdo->inTransaction();
-        if ($owns) {
-            $this->pdo->beginTransaction();
-        }
-        try {
+        // All-or-nothing, including inside a caller's transaction (savepoint).
+        Atomic::run($this->pdo, function () use ($spec, $vectors): void {
             $statement = $this->pdo->prepare(
                 "INSERT INTO {$this->vectors} (index_name, chunk_id, vector) VALUES (?, ?, ?)
                  ON CONFLICT (index_name, chunk_id) DO UPDATE SET vector = excluded.vector",
@@ -81,15 +79,7 @@ class PdoVectorStore implements VectorStore
                 $statement->bindValue(3, $this->pack($spec, $vector), PDO::PARAM_LOB);
                 $statement->execute();
             }
-            if ($owns) {
-                $this->pdo->commit();
-            }
-        } catch (\Throwable $e) {
-            if ($owns && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
-            throw $e;
-        }
+        });
     }
 
     public function nearest(IndexSpec $spec, array $query, int $k): array

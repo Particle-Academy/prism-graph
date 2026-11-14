@@ -16,9 +16,9 @@ use Prism\Graph\Fact;
 use Prism\Graph\FactStatus;
 use Prism\Graph\Origin;
 use Prism\Graph\Scope;
+use Prism\Graph\Support\Atomic;
 use Prism\Graph\TableMap;
 use Prism\Graph\Trust;
-use Throwable;
 
 /**
  * GraphStore over PDO for SQLite (3.24+, with FTS5) and PostgreSQL. Every value
@@ -235,24 +235,33 @@ final class PdoGraphStore implements GraphStore
     {
         $stored = null;
         $this->transaction(function () use ($scope, $oldKey, $replacement, $policy, &$stored): void {
-            $from = $this->time($replacement->validFrom);
+            // DECIDE BEFORE WRITING. The replacement's status comes from its
+            // evidence alone, so it is known before anything changes; the close
+            // below then refuses, in the same statement, to close an accepted
+            // fact for a replacement that would not be accepted. A refused
+            // supersede writes nothing, whether or not the caller holds a
+            // transaction (impactium, against 0.2.0: the old order closed the
+            // fact first and relied on a rollback that an outer transaction
+            // swallowed).
+            $prepared = $this->prepareFact($scope, $replacement, $policy);
+            $from = $prepared['from'];
             $oldId = $scope->qualify('fact', $oldKey);
-            // A write first, so SQLite takes the writer lock before any read in this transaction.
             $closed = $this->run(
                 "UPDATE {$this->tables->facts} SET valid_to = ?, superseded_by = ?
-                 WHERE id = ? AND valid_to IS NULL AND expired_at IS NULL AND valid_from <= ?",
-                [$from, $replacement->id, $oldId, $from],
+                 WHERE id = ? AND valid_to IS NULL AND expired_at IS NULL AND valid_from <= ?
+                   AND (status <> ? OR ? = ?)",
+                [$from, $replacement->id, $oldId, $from,
+                    FactStatus::Accepted->value, $prepared['status']->value, FactStatus::Accepted->value],
             );
             if ($closed !== 1) {
+                $old = $this->select("SELECT status, valid_to, expired_at, valid_from FROM {$this->tables->facts} WHERE id = ?", [$oldId])[0] ?? null;
+                if ($old !== null && $old['valid_to'] === null && $old['expired_at'] === null
+                    && $old['status'] === FactStatus::Accepted->value && $prepared['status'] !== FactStatus::Accepted) {
+                    throw new GraphException('An accepted fact can only be superseded by one the policy also accepts; this replacement would be a '.$prepared['status']->value.'.');
+                }
                 throw new GraphException('Only a fact still in force, valid before the replacement starts, can be superseded.');
             }
-            $old = $this->select("SELECT status FROM {$this->tables->facts} WHERE id = ?", [$oldId])[0]['status'];
-            $stored = $this->insertFact($scope, $replacement, $policy);
-            // The overwrite attack: one injected tool result must not be able to
-            // close a fact the policy accepted. Only an equally accepted fact can.
-            if ($old === FactStatus::Accepted->value && $stored->status !== FactStatus::Accepted) {
-                throw new GraphException('An accepted fact can only be superseded by one the policy also accepts; this replacement would be a '.$stored->status->value.'.');
-            }
+            $stored = $this->writeFact($scope, $replacement, $prepared);
         });
 
         return $stored;
@@ -366,6 +375,16 @@ final class PdoGraphStore implements GraphStore
 
     private function insertFact(Scope $scope, Fact $fact, AcceptancePolicy $policy): Fact
     {
+        return $this->writeFact($scope, $fact, $this->prepareFact($scope, $fact, $policy));
+    }
+
+    /**
+     * Validate a fact and decide its status, READING ONLY.
+     *
+     * @return array{from: string, to: ?string, evidence: list<string>, status: FactStatus}
+     */
+    private function prepareFact(Scope $scope, Fact $fact, AcceptancePolicy $policy): array
+    {
         $this->key($fact->id);
         $from = $this->time($fact->validFrom);
         $to = $fact->validTo === null ? null : $this->time($fact->validTo);
@@ -392,6 +411,14 @@ final class PdoGraphStore implements GraphStore
             throw new GraphException('A retired chunk cannot be cited as new evidence.');
         }
         $status = $policy->decide(array_map(static fn (Chunk $c) => $c->trust ?? Trust::System, $chunks));
+
+        return ['from' => $from, 'to' => $to, 'evidence' => $evidence, 'status' => $status];
+    }
+
+    /** @param array{from: string, to: ?string, evidence: list<string>, status: FactStatus} $prepared */
+    private function writeFact(Scope $scope, Fact $fact, array $prepared): Fact
+    {
+        ['from' => $from, 'to' => $to, 'evidence' => $evidence, 'status' => $status] = $prepared;
         $now = $this->now();
         $id = $scope->qualify('fact', $fact->id);
         $this->run(
@@ -509,22 +536,9 @@ final class PdoGraphStore implements GraphStore
         return $statement->rowCount();
     }
 
+    /** All-or-nothing, including inside a caller's transaction (savepoint). */
     private function transaction(callable $work): void
     {
-        $owns = ! $this->pdo->inTransaction();
-        if ($owns) {
-            $this->pdo->beginTransaction();
-        }
-        try {
-            $work();
-            if ($owns) {
-                $this->pdo->commit();
-            }
-        } catch (Throwable $e) {
-            if ($owns && $this->pdo->inTransaction()) {
-                $this->pdo->rollBack();
-            }
-            throw $e;
-        }
+        Atomic::run($this->pdo, $work);
     }
 }
