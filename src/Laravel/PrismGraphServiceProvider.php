@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Prism\Graph\Laravel;
 
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Database\Events\ConnectionEstablished;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
 use Prism\Graph\Contracts\AcceptancePolicy;
@@ -54,6 +55,28 @@ final class PrismGraphServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([RepairFullTextCommand::class]);
         }
+        $this->loadSqliteVec();
+    }
+
+    /** G-281: load sqlite-vec on the configured connections when they open. Off unless a path is configured. */
+    private function loadSqliteVec(): void
+    {
+        $config = $this->app['config'];
+        $path = $config->get('prism-graph.sqlite_vec.extension_path');
+        if ($path === null || $path === '') {
+            return;
+        }
+        $connections = (array) $config->get('prism-graph.sqlite_vec.connections', []);
+        if ($connections === []) {
+            $connections = [(string) ($config->get('prism-graph.connection') ?? $config->get('database.default'))];
+        }
+        $loader = SqliteVecLoader::make($path, array_values($connections));
+        $this->app->instance(SqliteVecLoader::class, $loader);
+        $this->app['events']->listen(ConnectionEstablished::class, fn (ConnectionEstablished $event) => $loader->load($event->connection));
+        // A connection opened before this provider booted gets it too.
+        foreach ($this->app['db']->getConnections() as $connection) {
+            $loader->load($connection);
+        }
     }
 
     private function pdo(Application $app): \PDO
@@ -69,7 +92,7 @@ final class PrismGraphServiceProvider extends ServiceProvider
             $driver === null || $driver === '' => null,
             $driver === 'pdo' => new PdoVectorStore($this->pdo($app)),
             $driver === 'pgvector' => new PgVectorStore($this->pdo($app)),
-            // The app loads the extension on the connection (Pdo\Sqlite::loadExtension).
+            // The extension must be loaded on the connection: set prism-graph.sqlite_vec.extension_path (G-281).
             $driver === 'sqlite-vec' => new SqliteVecStore($this->pdo($app)),
             $app->bound($driver) => $app->make($driver),
             default => throw new InvalidArgumentException("Unknown prism-graph vector driver [{$driver}]."),
