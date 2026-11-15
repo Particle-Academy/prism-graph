@@ -283,7 +283,7 @@ Set `PRISM_GRAPH_VECTORS` before running the vector migration:
 | value | uses |
 |---|---|
 | `pdo` | Exact cosine search, run in PHP, on SQLite or PostgreSQL. |
-| `sqlite-vec` | [sqlite-vec](https://github.com/asg017/sqlite-vec), on the same tables as `pdo`. The app loads the extension (PHP 8.4+). |
+| `sqlite-vec` | [sqlite-vec](https://github.com/asg017/sqlite-vec), on the same tables as `pdo`, so switching needs no migration. PHP 8.4+; see below for loading the extension. |
 | `pgvector` | PostgreSQL with [pgvector](https://github.com/pgvector/pgvector). |
 | a container binding | Your own `Prism\Graph\Contracts\VectorStore`. |
 
@@ -294,6 +294,27 @@ Vector indexes:
 
 The embedder is set by `PRISM_GRAPH_EMBED_PROVIDER`, `_MODEL` and
 `_DIMENSIONS`.
+
+### Loading sqlite-vec
+
+Set the absolute path to the `vec0` extension, and prism-graph loads it on
+the named connections when they open:
+
+```dotenv
+PRISM_GRAPH_VECTORS=sqlite-vec
+PRISM_GRAPH_SQLITE_VEC_PATH=/opt/sqlite-vec/vec0.so
+# Optional; defaults to prism-graph's own connection. Comma-separated.
+PRISM_GRAPH_SQLITE_VEC_CONNECTIONS=sqlite
+```
+
+- **It loads native code into PHP,** so set the path only from your own
+  configuration. It must be an absolute path to an existing file, and nothing
+  is loaded unless it is set.
+- **Only the named connections** get the extension, and they must be SQLite.
+- **PHP 8.4 or later** is required (`Pdo\Sqlite::loadExtension`). On an older
+  PHP, the app refuses to boot with a clear message.
+- **A load that fails throws** when the connection opens, rather than leaving a
+  connection without the extension.
 
 ## Without Laravel
 
