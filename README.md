@@ -276,6 +276,26 @@ $systemPrompt .= $report->fenced();   // data inside a hash-tagged fence
 $report->omitted;                     // what did not fit, and why
 ```
 
+## Listing sources and chunks
+
+For a memory explorer, list what a scope can see, a page at a time:
+
+```php
+$page = $memory->listSources();                  // newest first, 50 per page
+$next = $memory->listSources($page['nextCursor']);
+$chunks = $memory->listChunks($sourceId, null, 100);
+```
+
+Each call returns `['contractVersion' => 'g282.1', 'items' => [...], 'nextCursor' => ?string]`.
+- A source item has `sourceId`, `title` (`metadata.title`, else the uri), `kind` (`metadata.kind`, else null),
+  `createdAt`, `chunkCount` and `trust`.
+- A chunk item has `chunkId`, `sourceId`, `text`, `position` (its place in the source), and `provenance` (uri,
+  sha256, byte and line range, heading path, recipe, trust, writer, recordedAt).
+- **Scoped like every read.** A source outside the scope lists as empty.
+- **Cursors are opaque** and only work in the scope and listing that issued them.
+- **Page size** defaults to 50 and is capped by `prism-graph.list_max` (200).
+- Retired sources and chunks are not listed.
+
 ## Vectors (optional)
 
 Set `PRISM_GRAPH_VECTORS` before running the vector migration:
