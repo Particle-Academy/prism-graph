@@ -9,6 +9,8 @@ use Prism\Graph\Contracts\AcceptancePolicy;
 use Prism\Graph\Contracts\Chunker;
 use Prism\Graph\Contracts\Embedder;
 use Prism\Graph\Contracts\GraphStore;
+use Prism\Graph\Contracts\ListsGraph;
+use Prism\Graph\Support\Digest;
 use Prism\Graph\Contracts\VectorStore;
 use Prism\Graph\Exceptions\GraphException;
 
@@ -36,7 +38,121 @@ final class ScopedGraph
         private readonly ?VectorStore $vectors,
         private readonly ?Embedder $embedder,
         private readonly AcceptancePolicy $policy,
+        private readonly int $listMax = self::DEFAULT_LIST_MAX,
     ) {}
+
+    /** The listing contract (G-282). A consumer refuses a version it does not know. */
+    public const CONTRACT_VERSION = 'g282.1';
+
+    public const DEFAULT_LIST_LIMIT = 50;
+
+    public const DEFAULT_LIST_MAX = 200;
+
+    /**
+     * Sources this scope can see, newest first, a page at a time (G-282).
+     *
+     * @return array{contractVersion: string, items: list<array<string, mixed>>, nextCursor: string|null}
+     */
+    public function listSources(?string $cursor = null, ?int $limit = null): array
+    {
+        $limit = $this->listLimit($limit);
+        $after = $cursor === null ? null : $this->readCursor($cursor, 'sources');
+        if ($after !== null && (count($after) !== 2 || ! is_string($after[0]) || ! is_string($after[1]))) {
+            throw new InvalidArgumentException('Invalid cursor.');
+        }
+        $rows = $this->lister()->listSources($this->scope, $after, $limit + 1);
+        $more = count($rows) > $limit;
+        $items = array_slice($rows, 0, $limit);
+        $last = end($items);
+
+        return [
+            'contractVersion' => self::CONTRACT_VERSION,
+            'items' => $items,
+            'nextCursor' => $more && $last !== false ? $this->writeCursor('sources', [$last['createdAt'], $last['sourceId']]) : null,
+        ];
+    }
+
+    /**
+     * Live chunks of one source, in source order, a page at a time (G-282). A source outside this scope yields an
+     * empty page, never an error that would confirm it exists.
+     *
+     * @return array{contractVersion: string, items: list<array<string, mixed>>, nextCursor: string|null}
+     */
+    public function listChunks(string $sourceId, ?string $cursor = null, ?int $limit = null): array
+    {
+        $limit = $this->listLimit($limit);
+        $after = $cursor === null ? null : $this->readCursor($cursor, 'chunks:'.$sourceId);
+        if ($after !== null && (count($after) !== 1 || ! is_int($after[0]) || $after[0] < 0)) {
+            throw new InvalidArgumentException('Invalid cursor.');
+        }
+        $rows = $this->lister()->listChunks($this->scope, $sourceId, $after[0] ?? null, $limit + 1);
+        $more = count($rows) > $limit;
+        $items = array_slice($rows, 0, $limit);
+        $last = end($items);
+        $nextCursor = $more && $last !== false ? $this->writeCursor('chunks:'.$sourceId, [$last['seq']]) : null;
+
+        return [
+            'contractVersion' => self::CONTRACT_VERSION,
+            // seq is the store's paging key; the contract's order is `position`.
+            'items' => array_map(static function (array $row): array {
+                unset($row['seq']);
+
+                return $row;
+            }, $items),
+            'nextCursor' => $nextCursor,
+        ];
+    }
+
+    private function lister(): ListsGraph
+    {
+        if (! $this->store instanceof ListsGraph) {
+            throw new GraphException('This graph store does not support listing (implement Prism\Graph\Contracts\ListsGraph).');
+        }
+
+        return $this->store;
+    }
+
+    private function listLimit(?int $limit): int
+    {
+        $limit ??= min(self::DEFAULT_LIST_LIMIT, $this->listMax);
+        if ($limit < 1 || $limit > $this->listMax) {
+            throw new InvalidArgumentException("limit must be between 1 and {$this->listMax}.");
+        }
+
+        return $limit;
+    }
+
+    /**
+     * Opaque, and bound to this scope and listing: a cursor from another scope or listing is refused. It needs no
+     * secret, because every listing query applies the scope predicate regardless of the cursor.
+     *
+     * @param  list<string|int>  $key
+     */
+    private function writeCursor(string $listing, array $key): string
+    {
+        $json = json_encode(['k' => $key, 'b' => $this->cursorBinding($listing)], JSON_THROW_ON_ERROR);
+
+        return rtrim(strtr(base64_encode($json), '+/', '-_'), '=');
+    }
+
+    /** @return list<mixed> */
+    private function readCursor(string $cursor, string $listing): array
+    {
+        $json = strlen($cursor) <= 1024 ? base64_decode(strtr($cursor, '-_', '+/'), true) : false;
+        $data = is_string($json) ? json_decode($json, true, 4) : null;
+        if (! is_array($data) || ! array_is_list($data['k'] ?? null) || ($data['b'] ?? null) !== $this->cursorBinding($listing)) {
+            throw new InvalidArgumentException('Invalid cursor.');
+        }
+
+        return $data['k'];
+    }
+
+    private function cursorBinding(string $listing): string
+    {
+        return substr(Digest::of('prism-graph/cursor@1', [...array_values(array_map(
+            static fn ($v) => $v ?? '', $this->scope->toArray(),
+        )), $listing]), 0, 16);
+    }
 
     public function scope(): Scope
     {

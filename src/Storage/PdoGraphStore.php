@@ -10,6 +10,7 @@ use PDO;
 use Prism\Graph\Chunk;
 use Prism\Graph\Contracts\AcceptancePolicy;
 use Prism\Graph\Contracts\GraphStore;
+use Prism\Graph\Contracts\ListsGraph;
 use Prism\Graph\EraseReport;
 use Prism\Graph\Exceptions\GraphException;
 use Prism\Graph\Fact;
@@ -28,7 +29,7 @@ use Prism\Graph\Trust;
  * {@see Scope} in SQL, not in PHP after the fact, so a row outside the reader's
  * scope is never fetched at all.
  */
-final class PdoGraphStore implements GraphStore
+final class PdoGraphStore implements GraphStore, ListsGraph
 {
     public const MAX_QUERY_TERMS = 16;
 
@@ -163,6 +164,77 @@ final class PdoGraphStore implements GraphStore
         }
 
         return array_values(array_filter(array_map(static fn (string $id) => $byId[$id] ?? null, $ids)));
+    }
+
+    public function listSources(Scope $reader, ?array $after, int $limit): array
+    {
+        [$visible, $bindings] = $this->visible('s', $reader);
+        $live = "SELECT 1 FROM {$this->tables->chunks} c WHERE c.source_id = s.id AND c.retired_at IS NULL";
+        $page = '';
+        if ($after !== null) {
+            $page = ' AND (s.recorded_at < ? OR (s.recorded_at = ? AND s.id < ?))';
+            $bindings = [...$bindings, $after[0], $after[0], $after[1]];
+        }
+        $rows = $this->select(
+            "SELECT s.id, s.uri, s.metadata, s.trust, s.recorded_at,
+                    (SELECT COUNT(*) FROM {$this->tables->chunks} c WHERE c.source_id = s.id AND c.retired_at IS NULL) AS chunk_count
+             FROM {$this->tables->sources} s
+             WHERE {$visible} AND EXISTS ({$live}){$page}
+             ORDER BY s.recorded_at DESC, s.id DESC
+             LIMIT ".max(1, min(1001, $limit)),
+            $bindings,
+        );
+
+        return array_map(function (array $row): array {
+            $metadata = json_decode((string) $row['metadata'], true, 16, JSON_THROW_ON_ERROR);
+            $metadata = is_array($metadata) ? $metadata : [];
+
+            return [
+                'sourceId' => trim((string) $row['id']),
+                'title' => is_string($metadata['title'] ?? null) && $metadata['title'] !== '' ? $metadata['title'] : (string) $row['uri'],
+                'kind' => is_string($metadata['kind'] ?? null) && $metadata['kind'] !== '' ? $metadata['kind'] : null,
+                'createdAt' => trim((string) $row['recorded_at']),
+                'chunkCount' => (int) $row['chunk_count'],
+                'trust' => (string) $row['trust'],
+            ];
+        }, $rows);
+    }
+
+    public function listChunks(Scope $reader, string $sourceId, ?int $afterSeq, int $limit): array
+    {
+        [$visible, $bindings] = $this->visible('s', $reader);
+        $rows = $this->select(
+            "SELECT * FROM (
+                SELECT c.seq, c.id, c.source_id, c.text, c.byte_start, c.byte_end, c.line_start, c.line_end,
+                       c.heading_path, c.recipe, s.uri, s.sha256, s.trust, s.writer, s.recorded_at,
+                       ROW_NUMBER() OVER (ORDER BY c.seq) AS position
+                FROM {$this->tables->chunks} c
+                JOIN {$this->tables->sources} s ON s.id = c.source_id
+                WHERE c.source_id = ? AND c.retired_at IS NULL AND {$visible}
+             ) listed WHERE listed.seq > ? ORDER BY listed.seq LIMIT ".max(1, min(1001, $limit)),
+            [$sourceId, ...$bindings, $afterSeq ?? 0],
+        );
+
+        return array_map(static fn (array $row): array => [
+            'chunkId' => trim((string) $row['id']),
+            'sourceId' => trim((string) $row['source_id']),
+            'text' => (string) $row['text'],
+            'position' => (int) $row['position'],
+            'seq' => (int) $row['seq'],
+            'provenance' => [
+                'uri' => (string) $row['uri'],
+                'sha256' => trim((string) $row['sha256']),
+                'byteStart' => (int) $row['byte_start'],
+                'byteEnd' => (int) $row['byte_end'],
+                'lineStart' => (int) $row['line_start'],
+                'lineEnd' => (int) $row['line_end'],
+                'headingPath' => json_decode((string) $row['heading_path'], true, 16, JSON_THROW_ON_ERROR),
+                'recipe' => (string) $row['recipe'],
+                'trust' => (string) $row['trust'],
+                'writer' => (string) $row['writer'],
+                'recordedAt' => trim((string) $row['recorded_at']),
+            ],
+        ], $rows);
     }
 
     public function textSearch(Scope $reader, string $query, int $limit): array

@@ -44,6 +44,7 @@ final class PrismGraphServiceProvider extends ServiceProvider
                 $vectors,
                 $vectors === null ? null : new PrismEmbedder($this->spec($app)),
                 $app->make(AcceptancePolicy::class),
+                (int) $app['config']->get('prism-graph.list_max', 200),
             );
         });
     }
