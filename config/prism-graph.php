@@ -20,6 +20,9 @@ return [
     // Any other value: a container binding implementing Prism\Graph\Contracts\VectorStore.
     'vectors' => env('PRISM_GRAPH_VECTORS'),
 
+    // The largest page listSources/listChunks return (default page 50).
+    'list_max' => (int) env('PRISM_GRAPH_LIST_MAX', 200),
+
     // sqlite-vec (PHP 8.4+): an absolute path to the vec0 extension, loaded on these connections when they open.
     // Off unless the path is set. Connections default to the graph's own connection. This loads native code, so
     // only ever set it from your own configuration.
