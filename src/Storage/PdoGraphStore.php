@@ -9,6 +9,7 @@ use InvalidArgumentException;
 use PDO;
 use Prism\Graph\Chunk;
 use Prism\Graph\Contracts\AcceptancePolicy;
+use Prism\Graph\Contracts\FindsSources;
 use Prism\Graph\Contracts\GraphStore;
 use Prism\Graph\Contracts\ListsGraph;
 use Prism\Graph\EraseReport;
@@ -29,7 +30,7 @@ use Prism\Graph\Trust;
  * {@see Scope} in SQL, not in PHP after the fact, so a row outside the reader's
  * scope is never fetched at all.
  */
-final class PdoGraphStore implements GraphStore, ListsGraph
+final class PdoGraphStore implements FindsSources, GraphStore, ListsGraph
 {
     public const MAX_QUERY_TERMS = 16;
 
@@ -168,36 +169,62 @@ final class PdoGraphStore implements GraphStore, ListsGraph
 
     public function listSources(Scope $reader, ?array $after, int $limit): array
     {
-        [$visible, $bindings] = $this->visible('s', $reader);
-        $live = "SELECT 1 FROM {$this->tables->chunks} c WHERE c.source_id = s.id AND c.retired_at IS NULL";
         $page = '';
+        $bindings = [];
         if ($after !== null) {
             $page = ' AND (s.recorded_at < ? OR (s.recorded_at = ? AND s.id < ?))';
-            $bindings = [...$bindings, $after[0], $after[0], $after[1]];
+            $bindings = [$after[0], $after[0], $after[1]];
         }
-        $rows = $this->select(
+        $rows = $this->sources($reader, $page, $bindings, ' ORDER BY s.recorded_at DESC, s.id DESC LIMIT '.max(1, min(1001, $limit)));
+
+        return array_map($this->sourceItem(...), $rows);
+    }
+
+    public function findSource(Scope $reader, string $sourceId): ?array
+    {
+        $rows = $this->sources($reader, ' AND s.id = ?', [$sourceId], ' LIMIT 1');
+
+        return $rows === [] ? null : $this->sourceItem($rows[0]);
+    }
+
+    /**
+     * The one query behind listSources and findSource, so a source is found exactly when it would be listed: the
+     * reader's visibility predicate and at least one live chunk, always. Callers add only bound conditions.
+     *
+     * @param  list<string>  $bindings
+     * @return list<array<string, mixed>>
+     */
+    private function sources(Scope $reader, string $and, array $bindings, string $tail): array
+    {
+        [$visible, $scope] = $this->visible('s', $reader);
+        $live = "SELECT 1 FROM {$this->tables->chunks} c WHERE c.source_id = s.id AND c.retired_at IS NULL";
+
+        return $this->select(
             "SELECT s.id, s.uri, s.metadata, s.trust, s.recorded_at,
                     (SELECT COUNT(*) FROM {$this->tables->chunks} c WHERE c.source_id = s.id AND c.retired_at IS NULL) AS chunk_count
              FROM {$this->tables->sources} s
-             WHERE {$visible} AND EXISTS ({$live}){$page}
-             ORDER BY s.recorded_at DESC, s.id DESC
-             LIMIT ".max(1, min(1001, $limit)),
-            $bindings,
+             WHERE {$visible} AND EXISTS ({$live}){$and}{$tail}",
+            [...$scope, ...$bindings],
         );
+    }
 
-        return array_map(function (array $row): array {
-            $metadata = json_decode((string) $row['metadata'], true, 16, JSON_THROW_ON_ERROR);
-            $metadata = is_array($metadata) ? $metadata : [];
+    /**
+     * @param  array<string, mixed>  $row
+     * @return array{sourceId: string, title: string, kind: string|null, createdAt: string, chunkCount: int, trust: string}
+     */
+    private function sourceItem(array $row): array
+    {
+        $metadata = json_decode((string) $row['metadata'], true, 16, JSON_THROW_ON_ERROR);
+        $metadata = is_array($metadata) ? $metadata : [];
 
-            return [
-                'sourceId' => trim((string) $row['id']),
-                'title' => is_string($metadata['title'] ?? null) && $metadata['title'] !== '' ? $metadata['title'] : (string) $row['uri'],
-                'kind' => is_string($metadata['kind'] ?? null) && $metadata['kind'] !== '' ? $metadata['kind'] : null,
-                'createdAt' => trim((string) $row['recorded_at']),
-                'chunkCount' => (int) $row['chunk_count'],
-                'trust' => (string) $row['trust'],
-            ];
-        }, $rows);
+        return [
+            'sourceId' => trim((string) $row['id']),
+            'title' => is_string($metadata['title'] ?? null) && $metadata['title'] !== '' ? $metadata['title'] : (string) $row['uri'],
+            'kind' => is_string($metadata['kind'] ?? null) && $metadata['kind'] !== '' ? $metadata['kind'] : null,
+            'createdAt' => trim((string) $row['recorded_at']),
+            'chunkCount' => (int) $row['chunk_count'],
+            'trust' => (string) $row['trust'],
+        ];
     }
 
     public function listChunks(Scope $reader, string $sourceId, ?int $afterSeq, int $limit): array

@@ -95,6 +95,19 @@ final class PostgresTest extends TestCase
         $this->assertSame([], $graph->scope(Scope::tenant('globex')->owner('alice'))->search('kestrel falcon'));
     }
 
+    public function test_get_source_matches_the_listing_and_scope_on_postgres(): void
+    {
+        $graph = $this->graph();
+        $alice = $graph->scope(Scope::tenant('acme')->owner('alice'));
+        $alice->ingest('d', 'f://a', "Alice secret kestrel.\n", new MarkdownChunker, self::user());
+        $listed = $alice->listSources()['items'][0];
+
+        $this->assertSame($listed, $alice->getSource($listed['sourceId'])['item'], 'CHAR(64) padding is trimmed the same way');
+        $this->assertNull($graph->scope(Scope::tenant('acme')->owner('bob'))->getSource($listed['sourceId'])['item']);
+        $this->assertNull($graph->scope(Scope::tenant('globex')->owner('alice'))->getSource($listed['sourceId'])['item']);
+        $this->assertNull($alice->getSource("' OR 1=1 --")['item']);
+    }
+
     public function test_erase_cascades_on_postgres(): void
     {
         $vectors = new PgVectorStore($this->pdo);
