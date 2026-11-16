@@ -8,6 +8,7 @@ use InvalidArgumentException;
 use Prism\Graph\Contracts\AcceptancePolicy;
 use Prism\Graph\Contracts\Chunker;
 use Prism\Graph\Contracts\Embedder;
+use Prism\Graph\Contracts\FindsSources;
 use Prism\Graph\Contracts\GraphStore;
 use Prism\Graph\Contracts\ListsGraph;
 use Prism\Graph\Support\Digest;
@@ -47,6 +48,8 @@ final class ScopedGraph
     public const DEFAULT_LIST_LIMIT = 50;
 
     public const DEFAULT_LIST_MAX = 200;
+
+    public const MAX_SOURCE_ID_BYTES = 64;
 
     /**
      * Sources this scope can see, newest first, a page at a time (G-282).
@@ -101,6 +104,39 @@ final class ScopedGraph
             }, $items),
             'nextCursor' => $nextCursor,
         ];
+    }
+
+    /**
+     * One source this scope can see, by id (G-295): the same item listSources would list for it, so a consumer
+     * labelling evidence chunks need not page the whole listing. `item` is null for a source that is absent, outside
+     * this scope, in another tenant, or has every chunk retired, and those cases are indistinguishable: nothing here
+     * confirms that a source exists elsewhere.
+     *
+     * @return array{contractVersion: string, item: array{sourceId: string, title: string, kind: string|null, createdAt: string, chunkCount: int, trust: string}|null}
+     */
+    public function getSource(string $sourceId): array
+    {
+        // Source ids are 64-character digests (Scope::qualify), stored as CHAR(64): nothing longer can be one.
+        if ($sourceId === '' || strlen($sourceId) > self::MAX_SOURCE_ID_BYTES) {
+            throw new InvalidArgumentException('A source id is 1-'.self::MAX_SOURCE_ID_BYTES.' bytes.');
+        }
+        if (preg_match('/[\x00-\x1F\x7F]/', $sourceId) === 1 || ! mb_check_encoding($sourceId, 'UTF-8')) {
+            throw new InvalidArgumentException('A source id must be valid UTF-8 with no control characters.');
+        }
+
+        return [
+            'contractVersion' => self::CONTRACT_VERSION,
+            'item' => $this->finder()->findSource($this->scope, $sourceId),
+        ];
+    }
+
+    private function finder(): FindsSources
+    {
+        if (! $this->store instanceof FindsSources) {
+            throw new GraphException('This graph store does not support source lookup (implement Prism\Graph\Contracts\FindsSources).');
+        }
+
+        return $this->store;
     }
 
     private function lister(): ListsGraph

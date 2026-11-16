@@ -284,6 +284,7 @@ For a memory explorer, list what a scope can see, a page at a time:
 $page = $memory->listSources();                  // newest first, 50 per page
 $next = $memory->listSources($page['nextCursor']);
 $chunks = $memory->listChunks($sourceId, null, 100);
+$source = $memory->getSource($chunk->sourceId);  // one source by id, no paging
 ```
 
 Each call returns `['contractVersion' => 'g282.1', 'items' => [...], 'nextCursor' => ?string]`.
@@ -295,6 +296,10 @@ Each call returns `['contractVersion' => 'g282.1', 'items' => [...], 'nextCursor
 - **Cursors are opaque** and only work in the scope and listing that issued them.
 - **Page size** defaults to 50 and is capped by `prism-graph.list_max` (200).
 - Retired sources and chunks are not listed.
+- `getSource` returns `['contractVersion' => 'g282.1', 'item' => ?array]`, with the same item `listSources`
+  would list. `item` is null for a source that is unknown, outside the scope or fully retired, with no way to tell
+  which. An id must be 1-64 bytes of valid UTF-8 with no control characters. A custom store implements
+  `Prism\Graph\Contracts\FindsSources` to support it.
 
 ## Vectors (optional)
 
