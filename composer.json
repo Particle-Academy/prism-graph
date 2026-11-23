@@ -12,7 +12,7 @@
         "orchestra/testbench": "^10.0 || ^11.0",
         "phpunit/phpunit": "^11.0",
         "particle-academy/prism": ">=0.147.2 <1.0",
-        "particle-academy/prism-harness": "^0.24"
+        "particle-academy/prism-harness": "^0.24 || ^0.25 || ^0.26"
     },
     "suggest": {
         "particle-academy/prism": "Embeddings via Prism::embeddings()",
